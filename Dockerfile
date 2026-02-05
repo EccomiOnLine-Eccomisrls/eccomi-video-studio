@@ -2,7 +2,7 @@ FROM runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel
 
 WORKDIR /app
 
-# 1. Installiamo Git e le librerie grafiche (Fondamentale!)
+# 1. Installiamo Git e le librerie di sistema PRIMA di tutto
 RUN apt-get update && apt-get install -y \
     git \
     ffmpeg \
@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Ora scarichiamo SadTalker (Adesso Git è installato e funzionerà)
+# 2. Ora scarichiamo SadTalker (Adesso Git è presente!)
 RUN git clone https://github.com/Winfredy/SadTalker.git .
 
 # 3. Installiamo le librerie Python

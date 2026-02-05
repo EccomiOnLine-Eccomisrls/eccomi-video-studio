@@ -1,7 +1,5 @@
 runpod
-deepface
-edge-tts
 boto3
-tf-keras
-opencv-python
-
+edge-tts
+opencv-python-headless
+gdown

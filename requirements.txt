@@ -1,0 +1,8 @@
+cat <<EOF > requirements.txt
+runpod
+deepface
+edge-tts
+boto3
+tf-keras
+opencv-python
+EOF

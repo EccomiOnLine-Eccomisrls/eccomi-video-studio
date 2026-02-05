@@ -68,4 +68,3 @@ def handler(job):
         return {"status": "error", "message": str(e)}
 
 runpod.serverless.start({"handler": handler})
-EOF

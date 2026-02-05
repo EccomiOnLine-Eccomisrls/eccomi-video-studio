@@ -1,1 +1,7 @@
+runpod
+deepface
+edge-tts
+boto3
+tf-keras
+opencv-python
 

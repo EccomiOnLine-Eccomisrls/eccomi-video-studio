@@ -1,4 +1,3 @@
-cat <<EOF > handler.py
 import runpod
 import os
 import boto3

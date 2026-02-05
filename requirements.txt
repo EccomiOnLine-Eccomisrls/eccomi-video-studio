@@ -5,4 +5,4 @@ edge-tts
 boto3
 tf-keras
 opencv-python
-EOF
+

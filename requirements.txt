@@ -3,3 +3,5 @@ boto3
 edge-tts
 opencv-python-headless
 gdown
+deepface
+tf-keras

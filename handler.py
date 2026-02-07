@@ -4,6 +4,7 @@ import boto3
 import uuid
 import glob
 import shutil
+import time
 from deepface import DeepFace
 
 # CONFIGURAZIONE CLOUDFLARE R2
@@ -24,10 +25,12 @@ def upload_to_r2(file_path, job_id):
     return f"https://pub-b9fa6928f7ee48bcac3b22e0665726e1.r2.dev/{filename}"
 
 def handler(job):
-    # Pulizia cartelle per evitare di caricare video vecchi
+    # Pulizia preventiva
     if os.path.exists("./results"):
         shutil.rmtree("./results")
     os.makedirs("./results", exist_ok=True)
+    if os.path.exists("source.jpg"):
+        os.remove("source.jpg")
 
     try:
         data = job["input"]
@@ -35,10 +38,19 @@ def handler(job):
         text = data.get("text")
         job_id = job.get("id", str(uuid.uuid4()))
 
-                # 1. Download immagine (Versione rinforzata)
-        os.system(f'curl -L -f "{image_url}" -o source.jpg')
+        # 1. Download immagine rinforzato con attesa
+        # Usiamo virgolette e flag per gestire errori di rete
+        os.system(f'curl -L -s -f "{image_url}" -o source.jpg')
+        
+        # Piccola pausa per assicurarsi che il file sia scritto su disco
+        timeout = 10
+        start_time = time.time()
+        while not os.path.exists("source.jpg") or os.path.getsize("source.jpg") == 0:
+            time.sleep(1)
+            if time.time() - start_time > timeout:
+                return {"status": "error", "message": "Impossibile scaricare la foto sorgente"}
 
-        # 2. Analisi Genere per scelta Voce
+        # 2. Analisi Genere
         objs = DeepFace.analyze(img_path="source.jpg", actions=['gender'], enforce_detection=False)
         gender = objs[0]['dominant_gender']
         voice = "it-IT-GiuseppeNeural" if gender == "Man" else "it-IT-ElsaNeural"
@@ -53,10 +65,10 @@ def handler(job):
         )
         os.system(cmd)
 
-        # 5. Recupero il file video prodotto
+        # 5. Recupero il file video
         files = glob.glob("./results/**/*.mp4", recursive=True)
         if not files:
-            return {"status": "error", "message": "Video non generato dal sistema"}
+            return {"status": "error", "message": "Video non generato"}
         
         final_video = max(files, key=os.path.getctime)
 
@@ -66,8 +78,7 @@ def handler(job):
         return {
             "status": "completed",
             "video_url": video_url,
-            "gender_detected": gender,
-            "voice_used": voice
+            "gender_detected": gender
         }
 
     except Exception as e:

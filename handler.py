@@ -1,6 +1,17 @@
+import subprocess
+import sys
 import os
-# Questo comando DEVE essere la prima cosa che il server esegue
-os.system('pip install safetensors')
+
+# 1. FORZIAMO L'INSTALLAZIONE DELLE LIBRERIE MANCANTI ALL'AVVIO
+def install(package):
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    except:
+        pass
+
+install('safetensors')
+install('boto3')
+install('deepface')
 
 import runpod
 import boto3
@@ -8,86 +19,71 @@ import uuid
 import glob
 import shutil
 import time
-# Sposta DeepFace qui sotto, dopo il comando os.system
 from deepface import DeepFace
 
-
-# CONFIGURAZIONE CLOUDFLARE R2
-ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785"
-SECRET_KEY = "7cd7656140d6379abdfbc21df448478f87a32afdc613f4d32c53e5bbc3541bf8"
-ENDPOINT_URL = "https://b9fa6928f7ee48bcac3b22e0665726e1.r2.cloudflarestorage.com"
-BUCKET_NAME = "eccomionline-video"
-
-def upload_to_r2(file_path, job_id):
-    s3 = boto3.client('s3',
-        endpoint_url=ENDPOINT_URL,
-        aws_access_key_id=ACCESS_KEY,
-        aws_secret_access_key=SECRET_KEY,
-        region_name="auto"
-    )
-    filename = f"{job_id}.mp4"
-    s3.upload_file(file_path, BUCKET_NAME, filename, ExtraArgs={'ContentType': 'video/mp4'})
-    return f"https://pub-b9fa6928f7ee48bcac3b22e0665726e1.r2.dev/{filename}"
+# 2. CONFIGURAZIONE CLOUDFLARE R2
+R2_ACCESS_KEY_ID = "006d152c1e6e968032f3088b90c330df"
+R2_SECRET_ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785" 
+R2_BUCKET_NAME = "eccomionline-video"
+R2_ENDPOINT_URL = "https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com"
+R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
 
 def handler(job):
-    # Pulizia preventiva
-    if os.path.exists("./results"):
-        shutil.rmtree("./results")
-    os.makedirs("./results", exist_ok=True)
-    if os.path.exists("source.jpg"):
-        os.remove("source.jpg")
+    job_input = job['input']
+    image_url = job_input.get('image_url')
+    text = job_input.get('text')
+
+    if not image_url or not text:
+        return {"error": "Mancano image_url o text"}
 
     try:
-        data = job["input"]
-        image_url = data.get("image_url")
-        text = data.get("text")
-        job_id = job.get("id", str(uuid.uuid4()))
+        # Pulizia cartelle precedenti
+        if os.path.exists('results'): shutil.rmtree('results')
+        os.makedirs('results', exist_ok=True)
 
-        # 1. Download immagine rinforzato con attesa
-        # Usiamo virgolette e flag per gestire errori di rete
+        # 3. DOWNLOAD FOTO
         os.system(f'curl -L -s -f "{image_url}" -o source.jpg')
-        
-        # Piccola pausa per assicurarsi che il file sia scritto su disco
-        timeout = 10
-        start_time = time.time()
-        while not os.path.exists("source.jpg") or os.path.getsize("source.jpg") == 0:
-            time.sleep(1)
-            if time.time() - start_time > timeout:
-                return {"status": "error", "message": "Impossibile scaricare la foto sorgente"}
+        if not os.path.exists('source.jpg'):
+            return {"error": "Impossibile scaricare la foto. Controlla il link."}
 
-        # 2. Analisi Genere
-        objs = DeepFace.analyze(img_path="source.jpg", actions=['gender'], enforce_detection=False)
-        gender = objs[0]['dominant_gender']
+        # 4. ANALISI GENERE (DeepFace)
+        try:
+            objs = DeepFace.analyze(img_path="source.jpg", actions=['gender'], enforce_detection=False)
+            gender = objs[0]['dominant_gender']
+        except:
+            gender = "Man"
+        
         voice = "it-IT-GiuseppeNeural" if gender == "Man" else "it-IT-ElsaNeural"
 
-        # 3. Generazione Audio TTS
-        os.system(f'edge-tts --text "{text}" --write-media audio.wav --voice {voice}')
+        # 5. GENERAZIONE AUDIO (Edge-TTS)
+        audio_cmd = f'edge-tts --text "{text}" --voice {voice} --write-media audio.wav'
+        os.system(audio_cmd)
 
-                # 4. Rendering SadTalker (Versione Velocizzata)
-        cmd = (
+        # 6. RENDERING SADTALKER
+        # Usiamo 'resize' per essere più veloci e stabili
+        render_cmd = (
             f"python inference.py --source_image source.jpg --driven_audio audio.wav "
             f"--result_dir ./results --still --preprocess resize --enhancer gfpgan"
         )
+        os.system(render_cmd)
 
-        os.system(cmd)
-
-        # 5. Recupero il file video
-        files = glob.glob("./results/**/*.mp4", recursive=True)
-        if not files:
-            return {"status": "error", "message": "Video non generato"}
-        
-        final_video = max(files, key=os.path.getctime)
-
-        # 6. Caricamento su Cloudflare R2
-        video_url = upload_to_r2(final_video, job_id)
-
-        return {
-            "status": "completed",
-            "video_url": video_url,
-            "gender_detected": gender
-        }
+        # 7. CARICAMENTO SU CLOUDFLARE R2
+        mp4_files = glob.glob("results/**/*.mp4", recursive=True)
+        if mp4_files:
+            output_filename = f"{uuid.uuid4()}.mp4"
+            s3 = boto3.client('s3',
+                endpoint_url=R2_ENDPOINT_URL,
+                aws_access_key_id=R2_ACCESS_KEY_ID,
+                aws_secret_access_key=R2_SECRET_ACCESS_KEY
+            )
+            s3.upload_file(mp4_files[0], R2_BUCKET_NAME, output_filename)
+            
+            video_url = f"{R2_PUBLIC_URL}/{output_filename}"
+            return {"video_url": video_url}
+        else:
+            return {"error": "Video non generato. Controlla i log del rendering."}
 
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"error": str(e)}
 
 runpod.serverless.start({"handler": handler})

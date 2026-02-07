@@ -19,41 +19,52 @@ def handler(job):
     image_url = job_input.get('image_url')
     text = job_input.get('text')
 
-    # Percorsi sicuri in /tmp
+    # Percorsi sicuri nella cartella temporanea
     source_path = "/tmp/source.jpg"
     audio_path = "/tmp/audio.wav"
     results_dir = "/tmp/results"
 
     try:
+        # Pulizia cartelle
         if os.path.exists(results_dir): shutil.rmtree(results_dir)
         os.makedirs(results_dir, exist_ok=True)
+        if os.path.exists(source_path): os.remove(source_path)
 
         # 1. SCARICAMENTO FOTO
         os.system(f'curl -L -s -f "{image_url}" -o {source_path}')
-        time.sleep(2) # Pausa di sicurezza per il disco
+        time.sleep(2) 
 
-        if not os.path.exists(source_path):
-            return {"error": "Il server non riesce a scrivere source.jpg"}
+        if not os.path.exists(source_path) or os.path.getsize(source_path) < 100:
+            return {"error": "Il server non è riuscito a scaricare la foto. Controlla il link."}
 
-        # 2. ANALISI E GENERAZIONE
+        # 2. ANALISI GENERE E VOCE
         objs = DeepFace.analyze(img_path=source_path, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
+        # 3. GENERAZIONE AUDIO
         os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {audio_path}')
         
-        # Rendering SadTalker (puntando ai nuovi percorsi)
-        render_cmd = f"python inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize --enhancer gfpgan"
+        # 4. RENDERING SADTALKER (Versione ottimizzata)
+        # Abbiamo rimosso --enhancer per evitare crash di memoria
+        render_cmd = f"python inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize"
         os.system(render_cmd)
 
-        # 3. CARICAMENTO SU R2
+        # 5. RICERCA VIDEO E CARICAMENTO SU CLOUDFLARE R2
+        # Cerchiamo il file .mp4 in tutte le sottocartelle generate
         mp4_files = glob.glob(f"{results_dir}/**/*.mp4", recursive=True)
+        
         if mp4_files:
             output_filename = f"{uuid.uuid4()}.mp4"
-            s3 = boto3.client('s3', endpoint_url=R2_ENDPOINT_URL, aws_access_key_id=R2_ACCESS_KEY_ID, aws_secret_access_key=R2_SECRET_ACCESS_KEY)
+            s3 = boto3.client('s3', 
+                endpoint_url=R2_ENDPOINT_URL, 
+                aws_access_key_id=R2_ACCESS_KEY_ID, 
+                aws_secret_access_key=R2_SECRET_ACCESS_KEY
+            )
             s3.upload_file(mp4_files[0], R2_BUCKET_NAME, output_filename)
+            
             return {"video_url": f"{R2_PUBLIC_URL}/{output_filename}"}
         
-        return {"error": "Rendering fallito: il video non è stato creato."}
+        return {"error": "Rendering completato ma nessun video trovato. Controlla i log."}
 
     except Exception as e:
         return {"error": str(e)}

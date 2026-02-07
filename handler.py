@@ -19,39 +19,41 @@ def handler(job):
     image_url = job_input.get('image_url')
     text = job_input.get('text')
 
+    # Percorsi sicuri in /tmp
+    source_path = "/tmp/source.jpg"
+    audio_path = "/tmp/audio.wav"
+    results_dir = "/tmp/results"
+
     try:
-        if os.path.exists('results'): shutil.rmtree('results')
-        os.makedirs('results', exist_ok=True)
+        if os.path.exists(results_dir): shutil.rmtree(results_dir)
+        os.makedirs(results_dir, exist_ok=True)
 
-        # 1. SCARICAMENTO FOTO CON ATTESA
-        os.system(f'curl -L -s -f "{image_url}" -o source.jpg')
-        
-        # Aspettiamo massimo 5 secondi che il file appaia sul disco
-        for _ in range(5):
-            if os.path.exists('source.jpg'): break
-            time.sleep(1)
+        # 1. SCARICAMENTO FOTO
+        os.system(f'curl -L -s -f "{image_url}" -o {source_path}')
+        time.sleep(2) # Pausa di sicurezza per il disco
 
-        if not os.path.exists('source.jpg'):
-            return {"error": "Errore critico: la foto non è stata scaricata. Controlla il link."}
+        if not os.path.exists(source_path):
+            return {"error": "Il server non riesce a scrivere source.jpg"}
 
         # 2. ANALISI E GENERAZIONE
-        objs = DeepFace.analyze(img_path="source.jpg", actions=['gender'], enforce_detection=False)
+        objs = DeepFace.analyze(img_path=source_path, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        os.system(f'edge-tts --text "{text}" --voice {voice} --write-media audio.wav')
+        os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {audio_path}')
         
-        # Rendering SadTalker
-        os.system(f"python inference.py --source_image source.jpg --driven_audio audio.wav --result_dir ./results --still --preprocess resize --enhancer gfpgan")
+        # Rendering SadTalker (puntando ai nuovi percorsi)
+        render_cmd = f"python inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize --enhancer gfpgan"
+        os.system(render_cmd)
 
         # 3. CARICAMENTO SU R2
-        mp4_files = glob.glob("results/**/*.mp4", recursive=True)
+        mp4_files = glob.glob(f"{results_dir}/**/*.mp4", recursive=True)
         if mp4_files:
             output_filename = f"{uuid.uuid4()}.mp4"
             s3 = boto3.client('s3', endpoint_url=R2_ENDPOINT_URL, aws_access_key_id=R2_ACCESS_KEY_ID, aws_secret_access_key=R2_SECRET_ACCESS_KEY)
             s3.upload_file(mp4_files[0], R2_BUCKET_NAME, output_filename)
             return {"video_url": f"{R2_PUBLIC_URL}/{output_filename}"}
         
-        return {"error": "Rendering fallito. Controlla i parametri dell'immagine."}
+        return {"error": "Rendering fallito: il video non è stato creato."}
 
     except Exception as e:
         return {"error": str(e)}

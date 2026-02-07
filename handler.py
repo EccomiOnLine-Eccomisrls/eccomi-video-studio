@@ -35,8 +35,8 @@ def handler(job):
         text = data.get("text")
         job_id = job.get("id", str(uuid.uuid4()))
 
-        # 1. Download immagine (usiamo -L per seguire i redirect e -o per sicurezza)
-        os.system(f"curl -L '{image_url}' -o source.jpg")
+                # 1. Download immagine (Versione rinforzata)
+        os.system(f'curl -L -f "{image_url}" -o source.jpg')
 
         # 2. Analisi Genere per scelta Voce
         objs = DeepFace.analyze(img_path="source.jpg", actions=['gender'], enforce_detection=False)

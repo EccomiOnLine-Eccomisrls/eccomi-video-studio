@@ -1,11 +1,14 @@
-import runpod
 import os
+os.system('pip install safetensors')
+
+import runpod
 import boto3
 import uuid
 import glob
 import shutil
 import time
 from deepface import DeepFace
+
 
 # CONFIGURAZIONE CLOUDFLARE R2
 ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785"

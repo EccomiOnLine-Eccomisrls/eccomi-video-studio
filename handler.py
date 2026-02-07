@@ -2,9 +2,11 @@ import runpod
 import os
 import boto3
 import uuid
+import glob
+import shutil
 from deepface import DeepFace
 
-# CONFIGURAZIONE CLOUDFLARE R2 (Inserisco i tuoi dati già testati)
+# CONFIGURAZIONE CLOUDFLARE R2
 ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785"
 SECRET_KEY = "7cd7656140d6379abdfbc21df448478f87a32afdc613f4d32c53e5bbc3541bf8"
 ENDPOINT_URL = "https://b9fa6928f7ee48bcac3b22e0665726e1.r2.cloudflarestorage.com"
@@ -19,28 +21,32 @@ def upload_to_r2(file_path, job_id):
     )
     filename = f"{job_id}.mp4"
     s3.upload_file(file_path, BUCKET_NAME, filename, ExtraArgs={'ContentType': 'video/mp4'})
-    # Questo è il link pubblico che userai per inviare il video al cliente
     return f"https://pub-b9fa6928f7ee48bcac3b22e0665726e1.r2.dev/{filename}"
 
 def handler(job):
+    # Pulizia cartelle per evitare di caricare video vecchi
+    if os.path.exists("./results"):
+        shutil.rmtree("./results")
+    os.makedirs("./results", exist_ok=True)
+
     try:
         data = job["input"]
         image_url = data.get("image_url")
         text = data.get("text")
         job_id = job.get("id", str(uuid.uuid4()))
 
-        # 1. Download immagine del cliente
-        os.system(f"curl -L {image_url} > source.jpg")
+        # 1. Download immagine (usiamo -L per seguire i redirect e -o per sicurezza)
+        os.system(f"curl -L '{image_url}' -o source.jpg")
 
         # 2. Analisi Genere per scelta Voce
         objs = DeepFace.analyze(img_path="source.jpg", actions=['gender'], enforce_detection=False)
-        voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
+        gender = objs[0]['dominant_gender']
+        voice = "it-IT-GiuseppeNeural" if gender == "Man" else "it-IT-ElsaNeural"
 
         # 3. Generazione Audio TTS
         os.system(f'edge-tts --text "{text}" --write-media audio.wav --voice {voice}')
 
         # 4. Rendering SadTalker
-        # Usiamo i parametri che abbiamo testato per la massima qualità
         cmd = (
             f"python inference.py --source_image source.jpg --driven_audio audio.wav "
             f"--result_dir ./results --still --preprocess full --enhancer gfpgan"
@@ -48,10 +54,9 @@ def handler(job):
         os.system(cmd)
 
         # 5. Recupero il file video prodotto
-        import glob
         files = glob.glob("./results/**/*.mp4", recursive=True)
         if not files:
-            return {"status": "error", "message": "Video non generato"}
+            return {"status": "error", "message": "Video non generato dal sistema"}
         
         final_video = max(files, key=os.path.getctime)
 
@@ -61,7 +66,8 @@ def handler(job):
         return {
             "status": "completed",
             "video_url": video_url,
-            "gender_detected": objs[0]['dominant_gender']
+            "gender_detected": gender,
+            "voice_used": voice
         }
 
     except Exception as e:

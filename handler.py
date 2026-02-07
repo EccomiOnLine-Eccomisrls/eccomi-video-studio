@@ -58,11 +58,12 @@ def handler(job):
         # 3. Generazione Audio TTS
         os.system(f'edge-tts --text "{text}" --write-media audio.wav --voice {voice}')
 
-        # 4. Rendering SadTalker
+                # 4. Rendering SadTalker (Versione Velocizzata)
         cmd = (
             f"python inference.py --source_image source.jpg --driven_audio audio.wav "
-            f"--result_dir ./results --still --preprocess full --enhancer gfpgan"
+            f"--result_dir ./results --still --preprocess resize --enhancer gfpgan"
         )
+
         os.system(cmd)
 
         # 5. Recupero il file video

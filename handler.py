@@ -2,13 +2,15 @@ import os
 import subprocess
 import sys
 
-# --- FORZATURA INSTALLAZIONE (Non può fallire) ---
+# --- FORZATURA INSTALLAZIONE (Questo aggira il problema del pre_start.sh) ---
 def install_requirements():
     reqs = ["safetensors", "boto3", "deepface", "edge-tts"]
     for req in reqs:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", req])
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", req])
+        except:
+            pass
 
-# Eseguiamo l'installazione prima di caricare il resto
 install_requirements()
 
 import runpod
@@ -18,7 +20,7 @@ import glob
 import shutil
 import time
 
-# CONFIGURAZIONE R2 (I tuoi dati)
+# CONFIGURAZIONE R2
 R2_ACCESS_KEY_ID = "006d152c1e6e968032f3088b90c330df"
 R2_SECRET_ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785" 
 R2_BUCKET_NAME = "eccomionline-video"
@@ -26,8 +28,7 @@ R2_ENDPOINT_URL = "https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage
 R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
 
 def handler(job):
-    # Importiamo deepface solo qui dentro dopo l'installazione
-    from deepface import DeepFace
+    from deepface import DeepFace # Importato qui dopo l'installazione forzata
     
     job_input = job['input']
     image_url = job_input.get('image_url')
@@ -46,16 +47,16 @@ def handler(job):
         time.sleep(2)
 
         if not os.path.exists(source_path):
-            return {"error": "Immagine non trovata dopo il download"}
+            return {"error": "Foto non scaricata. Controlla il link."}
 
-        # 2. VOCE E ANALISI
+        # 2. ANALISI E VOCE
         objs = DeepFace.analyze(img_path=source_path, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # 3. AUDIO
+        # 3. GENERAZIONE AUDIO
         os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {audio_path}')
         
-        # 4. RENDERING (Versione super leggera)
+        # 4. RENDERING (Senza pesi extra)
         os.system(f"python inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize")
 
         # 5. INVIO A CLOUDFLARE
@@ -66,7 +67,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], R2_BUCKET_NAME, output_filename)
             return {"video_url": f"{R2_PUBLIC_URL}/{output_filename}"}
         
-        return {"error": "Video non creato dal motore SadTalker"}
+        return {"error": "Il video non è stato generato. Controlla i Log di sistema."}
 
     except Exception as e:
         return {"error": str(e)}

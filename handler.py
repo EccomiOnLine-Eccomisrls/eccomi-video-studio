@@ -1,4 +1,5 @@
 import os
+# Questo comando DEVE essere la prima cosa che il server esegue
 os.system('pip install safetensors')
 
 import runpod
@@ -7,6 +8,7 @@ import uuid
 import glob
 import shutil
 import time
+# Sposta DeepFace qui sotto, dopo il comando os.system
 from deepface import DeepFace
 
 

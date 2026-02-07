@@ -1,11 +1,5 @@
-import subprocess
-import sys
-import os
-
-# FORZA L'INSTALLAZIONE PRIMA DI OGNI ALTRA COSA
-subprocess.check_call([sys.executable, "-m", "pip", "install", "safetensors", "boto3", "deepface"])
-
 import runpod
+import os
 import boto3
 import uuid
 import glob

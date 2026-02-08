@@ -2,19 +2,37 @@ import os
 import subprocess
 import sys
 import time
+
+# --- 1. INSTALLAZIONE FORZATA (Eseguita prima di ogni import) ---
+def force_install():
+    # Elenco librerie critiche
+    libs = [
+        "numpy==1.23.5", 
+        "scipy", 
+        "deepface", 
+        "boto3", 
+        "edge-tts", 
+        "safetensors",
+        "opencv-python",
+        "tqdm",
+        "resampy",
+        "scikit-image"
+    ]
+    for lib in libs:
+        print(f"Verifica installazione: {lib}")
+        subprocess.run([sys.executable, "-m", "pip", "install", lib], check=False)
+
+# Eseguiamo il setup dei moduli
+force_install()
+
 import runpod
 import boto3
 import uuid
 import glob
 import shutil
 
-# --- 1. SETUP AMBIENTE ---
-def install_and_download():
-    # Installiamo versioni stabili e compatibili
-    reqs = ["numpy==1.23.5", "deepface", "boto3", "edge-tts", "safetensors"]
-    for req in reqs:
-        subprocess.run([sys.executable, "-m", "pip", "install", req], check=False)
-
+# --- 2. SETUP MODELLI ---
+def download_models():
     if not os.path.exists('checkpoints'):
         os.makedirs('checkpoints')
     
@@ -26,10 +44,10 @@ def install_and_download():
     for url in urls:
         fn = os.path.join('checkpoints', os.path.basename(url))
         if not os.path.exists(fn):
+            print(f"Scaricamento modello: {fn}")
             subprocess.run(["wget", "-O", fn, url], check=False)
 
-# Eseguiamo il setup
-install_and_download()
+download_models()
 
 # CONFIG R2
 R2_CONF = {
@@ -41,9 +59,13 @@ R2_CONF = {
 }
 
 def handler(job):
-    # QUI NON APPLICHIAMO PATCH! Lasciamo che DeepFace lavori pulito.
-    from deepface import DeepFace
-    import numpy as np 
+    # Importiamo qui dentro per evitare crash all'avvio se il rollout è parziale
+    try:
+        from deepface import DeepFace
+        import scipy
+        import numpy as np
+    except ImportError as e:
+        return {"error": f"Libreria mancante dopo installazione: {str(e)}"}
     
     job_input = job['input']
     img_url = job_input.get('image_url')
@@ -57,22 +79,19 @@ def handler(job):
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
 
-        # 1. Scarica Immagine
         os.system(f'curl -L -s "{img_url}" -o {tmp_img}')
         
-        # 2. Analisi Genere (DeepFace lavora senza patch, quindi non crasha)
+        # Analisi Genere
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # 3. Genera Audio
+        # Genera Audio
         os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {tmp_audio}')
         
-        # 4. RENDERING ISOLATO (Usiamo una patch locale solo qui)
-        # Questo trucco risolve il problema SadTalker senza rompere il resto
+        # Rendering con soppressione avvisi
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
         
-        # Eseguiamo SadTalker come processo separato
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img,
@@ -81,7 +100,6 @@ def handler(job):
             "--still", "--preprocess", "resize"
         ], env=env, check=True)
 
-        # 5. Upload
         files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if files:
             out_name = f"{uuid.uuid4()}.mp4"
@@ -89,7 +107,7 @@ def handler(job):
             s3.upload_file(files[0], R2_CONF["bucket"], out_name)
             return {"video_url": f"{R2_CONF['public']}/{out_name}"}
         
-        return {"error": "Video non trovato."}
+        return {"error": "Video non generato correttamente."}
 
     except Exception as e:
         return {"error": str(e)}

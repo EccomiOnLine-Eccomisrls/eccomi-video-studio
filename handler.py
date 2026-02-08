@@ -4,7 +4,7 @@ import sys
 
 # --- FORZATURA INSTALLAZIONE (Questo aggira il problema del pre_start.sh) ---
 def install_requirements():
-    reqs = ["safetensors", "boto3", "deepface", "edge-tts"]
+    reqs = ["safetensors", "boto3", "deepface", "edge-tts", "scipy", "numpy"]
     for req in reqs:
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", req])

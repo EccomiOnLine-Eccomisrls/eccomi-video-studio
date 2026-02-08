@@ -1,18 +1,6 @@
 import os
 import subprocess
 import sys
-
-# --- FORZATURA INSTALLAZIONE (Questo aggira il problema del pre_start.sh) ---
-def install_requirements():
-    reqs = ["safetensors", "boto3", "deepface", "edge-tts", "scipy", "numpy", "scikit-image", "opencv-python", "tqdm"]
-    for req in reqs:
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", req])
-        except:
-            pass
-
-install_requirements()
-
 import runpod
 import boto3
 import uuid
@@ -27,8 +15,33 @@ R2_BUCKET_NAME = "eccomionline-video"
 R2_ENDPOINT_URL = "https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com"
 R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
 
+def install_and_download():
+    # 1. Installazione Librerie
+    reqs = ["safetensors", "boto3", "deepface", "edge-tts", "scipy", "numpy", "scikit-image", "opencv-python", "tqdm"]
+    for req in reqs:
+        subprocess.run([sys.executable, "-m", "pip", "install", req], check=False)
+
+    # 2. Creazione cartella modelli e download file .pth mancanti
+    if not os.path.exists('checkpoints'):
+        os.makedirs('checkpoints')
+    
+    urls = [
+        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
+        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2exp_00300-256.pth",
+        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/facevid2vid_00089-256.pth"
+    ]
+    
+    for url in urls:
+        filename = os.path.join('checkpoints', os.path.basename(url))
+        if not os.path.exists(filename):
+            print(f"Scaricamento modello: {filename}...")
+            subprocess.run(["wget", "-O", filename, url])
+
+# Eseguiamo il setup all'avvio del container
+install_and_download()
+
 def handler(job):
-    from deepface import DeepFace # Importato qui dopo l'installazione forzata
+    from deepface import DeepFace
     
     job_input = job['input']
     image_url = job_input.get('image_url')
@@ -56,7 +69,7 @@ def handler(job):
         # 3. GENERAZIONE AUDIO
         os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {audio_path}')
         
-        # 4. RENDERING (Senza pesi extra)
+        # 4. RENDERING (Ora i file in /checkpoints ci sono!)
         os.system(f"python inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize")
 
         # 5. INVIO A CLOUDFLARE

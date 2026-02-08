@@ -2,37 +2,45 @@ import os
 import subprocess
 import sys
 import time
+
+# --- 1. PATCH GLOBALE NUMPY (Deve essere eseguita PRIMA di ogni altra cosa) ---
+try:
+    import numpy as np
+    np.float = float
+    np.int = int
+    np.object = object
+    np.bool = bool
+    # Iniezione forzata nei moduli di sistema per ingannare le librerie esterne
+    sys.modules['numpy.float'] = float
+    sys.modules['numpy.int'] = int
+    sys.modules['numpy.object'] = object
+    sys.modules['numpy.bool'] = bool
+except Exception:
+    pass
+
 import runpod
 import boto3
 import uuid
 import glob
 import shutil
 
-# --- 1. FUNZIONE SETUP (Librerie e Modelli) ---
+# --- 2. CONFIGURAZIONE R2 ---
+R2_ACCESS_KEY_ID = "006d152c1e6e968032f3088b90c330df"
+R2_SECRET_ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785" 
+R2_BUCKET_NAME = "eccomionline-video"
+R2_ENDPOINT_URL = "https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com"
+R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
+
+# --- 3. FUNZIONE SETUP ---
 def install_and_download():
-    # Installazione librerie con versioni specifiche per compatibilità
+    # Installazione librerie con versioni specifiche
     reqs = [
-        "safetensors", 
-        "boto3", 
-        "deepface", 
-        "edge-tts", 
-        "scipy", 
-        "numpy==1.22.4", 
-        "scikit-image", 
-        "opencv-python", 
-        "tqdm", 
-        "librosa", 
-        "resampy"
+        "safetensors", "boto3", "deepface", "edge-tts", 
+        "scipy", "numpy==1.23.5", "scikit-image", 
+        "opencv-python", "tqdm", "librosa", "resampy"
     ]
     for req in reqs:
         subprocess.run([sys.executable, "-m", "pip", "install", req], check=False)
-
-    # Patch immediata per Numpy (Risolve l'errore AttributeError: module 'numpy' has no attribute 'float')
-    import numpy as np
-    np.float = float
-    np.int = int
-    np.object = object
-    np.bool = bool
 
     # Download Modelli AI (.pth)
     if not os.path.exists('checkpoints'):
@@ -47,23 +55,18 @@ def install_and_download():
     for url in urls:
         filename = os.path.join('checkpoints', os.path.basename(url))
         if not os.path.exists(filename):
-            print(f"Scaricamento modello: {filename}...")
-            subprocess.run(["wget", "-O", filename, url])
+            print(f"Scaricando: {filename}")
+            subprocess.run(["wget", "-O", filename, url], check=False)
 
-# Eseguiamo il setup all'avvio
+# Eseguiamo il setup all'avvio del container
 install_and_download()
 
-# CONFIGURAZIONE R2
-R2_ACCESS_KEY_ID = "006d152c1e6e968032f3088b90c330df"
-R2_SECRET_ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785" 
-R2_BUCKET_NAME = "eccomionline-video"
-R2_ENDPOINT_URL = "https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com"
-R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
-
+# --- 4. LOGICA HANDLER ---
 def handler(job):
-    # Importiamo DeepFace qui dentro dopo l'installazione
+    # Riapplichiamo la patch numpy anche qui per sicurezza
     import numpy as np
-    np.float = float # Riaffermiamo la patch per sicurezza
+    np.float = float
+    
     from deepface import DeepFace
     
     job_input = job['input']
@@ -78,25 +81,26 @@ def handler(job):
         if os.path.exists(results_dir): shutil.rmtree(results_dir)
         os.makedirs(results_dir, exist_ok=True)
 
-        # 1. DOWNLOAD FOTO
+        # Download Foto
         os.system(f'curl -L -s -f "{image_url}" -o {source_path}')
         time.sleep(2)
 
         if not os.path.exists(source_path):
-            return {"error": "Foto non scaricata."}
+            return {"error": "Immagine non scaricata correttamente."}
 
-        # 2. ANALISI E VOCE
+        # Analisi Genere per Voce
         objs = DeepFace.analyze(img_path=source_path, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # 3. GENERAZIONE AUDIO
+        # Generazione Audio TTS
         os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {audio_path}')
         
-        # 4. RENDERING FINALE
-        # Usiamo sys.executable per essere sicuri di usare il Python corretto
-        os.system(f"{sys.executable} inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize")
+        # Rendering SadTalker (Inference)
+        # Usiamo sys.executable per garantire l'uso dell'ambiente patchato
+        cmd = f"{sys.executable} inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize"
+        os.system(cmd)
 
-        # 5. INVIO A CLOUDFLARE
+        # Upload su Cloudflare R2
         mp4_files = glob.glob(f"{results_dir}/**/*.mp4", recursive=True)
         if mp4_files:
             output_filename = f"{uuid.uuid4()}.mp4"
@@ -104,7 +108,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], R2_BUCKET_NAME, output_filename)
             return {"video_url": f"{R2_PUBLIC_URL}/{output_filename}"}
         
-        return {"error": "Video non generato. Controlla i log."}
+        return {"error": "Rendering fallito: nessun file MP4 generato."}
 
     except Exception as e:
         return {"error": str(e)}

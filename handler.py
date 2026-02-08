@@ -17,7 +17,7 @@ R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
 
 def install_and_download():
     # 1. Installazione Librerie
-    reqs = ["safetensors", "boto3", "deepface", "edge-tts", "scipy", "numpy", "scikit-image", "opencv-python", "tqdm"]
+    reqs = ["safetensors", "boto3", "deepface", "edge-tts", "scipy", "numpy==1.23.5", "scikit-image", "opencv-python", "tqdm", "librosa"]
     for req in reqs:
         subprocess.run([sys.executable, "-m", "pip", "install", req], check=False)
 

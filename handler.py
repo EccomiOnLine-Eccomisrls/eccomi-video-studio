@@ -2,33 +2,46 @@ import os
 import subprocess
 import sys
 import time
+
+# --- 1. SILENZIATORE AVVISI (Risolve il blocco VisibleDeprecationWarning) ---
+os.environ['PYTHONWARNINGS'] = 'ignore'
+import warnings
+warnings.filterwarnings("ignore")
+
 import runpod
 import boto3
 import uuid
 import glob
 import shutil
 
-# --- 1. FUNZIONE SETUP ---
+# --- 2. PATCH NUMPY ---
+try:
+    import numpy as np
+    # Forziamo le definizioni che mancano nelle nuove versioni
+    np.float = float
+    np.int = int
+    np.object = object
+    np.bool = bool
+except Exception:
+    pass
+
+# --- 3. CONFIGURAZIONE R2 ---
+R2_ACCESS_KEY_ID = "006d152c1e6e968032f3088b90c330df"
+R2_SECRET_ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785" 
+R2_BUCKET_NAME = "eccomionline-video"
+R2_ENDPOINT_URL = "https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com"
+R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
+
 def install_and_download():
-    # Installiamo una versione di Numpy specifica che è la più compatibile in assoluto
-    # e aggiungiamo le altre librerie necessarie
+    # Installiamo Numpy 1.22.4 che è l'unica che non ha quel Warning fastidioso
     reqs = [
-        "numpy==1.23.5",
-        "safetensors", 
-        "boto3", 
-        "deepface", 
-        "edge-tts", 
-        "scipy", 
-        "scikit-image", 
-        "opencv-python", 
-        "tqdm", 
-        "librosa", 
-        "resampy"
+        "numpy==1.22.4", "safetensors", "boto3", "deepface", 
+        "edge-tts", "scipy", "scikit-image", "opencv-python", 
+        "tqdm", "librosa", "resampy"
     ]
     for req in reqs:
         subprocess.run([sys.executable, "-m", "pip", "install", req], check=False)
 
-    # Download Modelli AI (.pth)
     if not os.path.exists('checkpoints'):
         os.makedirs('checkpoints')
     
@@ -43,22 +56,12 @@ def install_and_download():
         if not os.path.exists(filename):
             subprocess.run(["wget", "-O", filename, url], check=False)
 
-# Eseguiamo il setup all'avvio
+# Esecuzione Setup
 install_and_download()
 
-# CONFIGURAZIONE R2
-R2_ACCESS_KEY_ID = "006d152c1e6e968032f3088b90c330df"
-R2_SECRET_ACCESS_KEY = "6a2549124d3b9205d83d959b214cc785" 
-R2_BUCKET_NAME = "eccomionline-video"
-R2_ENDPOINT_URL = "https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com"
-R2_PUBLIC_URL = "https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev"
-
 def handler(job):
-    # Patch "leggera" eseguita SOLO dentro l'handler per non disturbare l'avvio di Pandas
     import numpy as np
-    if not hasattr(np, 'float'): np.float = float
-    if not hasattr(np, 'int'): np.int = int
-    
+    np.float = float # Riaffermiamo la patch
     from deepface import DeepFace
     
     job_input = job['input']
@@ -73,7 +76,6 @@ def handler(job):
         if os.path.exists(results_dir): shutil.rmtree(results_dir)
         os.makedirs(results_dir, exist_ok=True)
 
-        # Download Foto
         os.system(f'curl -L -s -f "{image_url}" -o {source_path}')
         time.sleep(2)
 
@@ -84,18 +86,11 @@ def handler(job):
         # Generazione Audio
         os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {audio_path}')
         
-        # Rendering SadTalker
-        # Usiamo il comando python diretto per isolare l'esecuzione
-        subprocess.run([
-            sys.executable, "inference.py", 
-            "--source_image", source_path, 
-            "--driven_audio", audio_path, 
-            "--result_dir", results_dir, 
-            "--still", 
-            "--preprocess", "resize"
-        ], check=False)
+        # Rendering (Qui ignoriamo gli avvisi anche nel comando di sistema)
+        cmd = f"PYTHONWARNINGS='ignore' {sys.executable} inference.py --source_image {source_path} --driven_audio {audio_path} --result_dir {results_dir} --still --preprocess resize"
+        os.system(cmd)
 
-        # Invio a Cloudflare
+        # Upload
         mp4_files = glob.glob(f"{results_dir}/**/*.mp4", recursive=True)
         if mp4_files:
             output_filename = f"{uuid.uuid4()}.mp4"
@@ -103,7 +98,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], R2_BUCKET_NAME, output_filename)
             return {"video_url": f"{R2_PUBLIC_URL}/{output_filename}"}
         
-        return {"error": "Il video non è stato generato. Controlla i Log di sistema."}
+        return {"error": "Video non generato. Controlla i Log."}
 
     except Exception as e:
         return {"error": str(e)}

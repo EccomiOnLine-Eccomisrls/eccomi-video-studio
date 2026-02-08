@@ -3,27 +3,14 @@ import subprocess
 import sys
 import time
 
-# --- 1. INSTALLAZIONE FORZATA (Eseguita prima di ogni import) ---
-def force_install():
-    # Elenco librerie critiche
-    libs = [
-        "numpy==1.23.5", 
-        "scipy", 
-        "deepface", 
-        "boto3", 
-        "edge-tts", 
-        "safetensors",
-        "opencv-python",
-        "tqdm",
-        "resampy",
-        "scikit-image"
-    ]
-    for lib in libs:
-        print(f"Verifica installazione: {lib}")
+# --- 1. INSTALLAZIONE FORZATA IMMEDIATA ---
+# Installiamo subito le librerie che mancano (scipy, resampy, ecc.)
+def install_missing_libs():
+    critical_libs = ["scipy", "resampy", "numpy==1.23.5", "deepface", "boto3", "edge-tts"]
+    for lib in critical_libs:
         subprocess.run([sys.executable, "-m", "pip", "install", lib], check=False)
 
-# Eseguiamo il setup dei moduli
-force_install()
+install_missing_libs()
 
 import runpod
 import boto3
@@ -31,11 +18,10 @@ import uuid
 import glob
 import shutil
 
-# --- 2. SETUP MODELLI ---
+# --- 2. DOWNLOAD MODELLI ---
 def download_models():
     if not os.path.exists('checkpoints'):
         os.makedirs('checkpoints')
-    
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2exp_00300-256.pth",
@@ -44,7 +30,6 @@ def download_models():
     for url in urls:
         fn = os.path.join('checkpoints', os.path.basename(url))
         if not os.path.exists(fn):
-            print(f"Scaricamento modello: {fn}")
             subprocess.run(["wget", "-O", fn, url], check=False)
 
 download_models()
@@ -59,28 +44,21 @@ R2_CONF = {
 }
 
 def handler(job):
-    # Importiamo qui dentro per evitare crash all'avvio se il rollout è parziale
-    try:
-        from deepface import DeepFace
-        import scipy
-        import numpy as np
-    except ImportError as e:
-        return {"error": f"Libreria mancante dopo installazione: {str(e)}"}
+    # Importiamo qui per essere sicuri che scipy sia ora disponibile
+    from deepface import DeepFace
+    import numpy as np
     
     job_input = job['input']
     img_url = job_input.get('image_url')
     text = job_input.get('text')
 
-    tmp_img = "/tmp/src.jpg"
-    tmp_audio = "/tmp/aud.wav"
-    tmp_res = "/tmp/out"
+    tmp_img, tmp_audio, tmp_res = "/tmp/src.jpg", "/tmp/aud.wav", "/tmp/out"
 
     try:
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
-
         os.system(f'curl -L -s "{img_url}" -o {tmp_img}')
-        
+
         # Analisi Genere
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
@@ -88,18 +66,16 @@ def handler(job):
         # Genera Audio
         os.system(f'edge-tts --text "{text}" --voice {voice} --write-media {tmp_audio}')
         
-        # Rendering con soppressione avvisi
+        # Rendering (Ignoriamo avvisi per non bloccare Numpy)
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
-        
         subprocess.run([
             sys.executable, "inference.py",
-            "--source_image", tmp_img,
-            "--driven_audio", tmp_audio,
-            "--result_dir", tmp_res,
-            "--still", "--preprocess", "resize"
+            "--source_image", tmp_img, "--driven_audio", tmp_audio,
+            "--result_dir", tmp_res, "--still", "--preprocess", "resize"
         ], env=env, check=True)
 
+        # Upload finale
         files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if files:
             out_name = f"{uuid.uuid4()}.mp4"
@@ -107,8 +83,7 @@ def handler(job):
             s3.upload_file(files[0], R2_CONF["bucket"], out_name)
             return {"video_url": f"{R2_CONF['public']}/{out_name}"}
         
-        return {"error": "Video non generato correttamente."}
-
+        return {"error": "Video non generato."}
     except Exception as e:
         return {"error": str(e)}
 

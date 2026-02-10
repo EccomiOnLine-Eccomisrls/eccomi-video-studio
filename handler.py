@@ -3,26 +3,28 @@ import subprocess
 import sys
 import runpod
 
-# Funzione per installare SOLO quello che manca, quando serve
 def install_missing_packages():
-    print(">>> Controllo dipendenze in corso...")
+    print(">>> Pulizia e allineamento versioni (Protobuf Fix)...")
+    # Forziamo protobuf e le basi prima del resto per evitare il conflitto del log
+    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "protobuf==3.20.3"], stdout=subprocess.DEVNULL)
+    
+    print(">>> Installazione dipendenze AI...")
     libs = [
         "numpy==1.23.5", "scipy", "safetensors", "boto3", 
         "deepface", "edge-tts", "opencv-python", "tqdm", 
         "resampy", "scikit-image", "librosa", "kornia==0.6.8",
         "yacs", "gdown", "facexlib", "gfpgan"
     ]
-    # Installiamo tutto silenziosamente
     subprocess.run([sys.executable, "-m", "pip", "install"] + libs, stdout=subprocess.DEVNULL)
     
     # Fix per Numpy
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
-    print(">>> Ambiente pronto.")
+    print(">>> Ambiente allineato e pronto.")
 
 def handler(job):
-    # Eseguiamo l'installazione qui dentro, così il container non crasha all'avvio
+    # Eseguiamo il setup all'interno del job
     install_missing_packages()
     
     import boto3
@@ -36,7 +38,7 @@ def handler(job):
     np.float = float
     np.int = int
 
-    # Modelli SadTalker
+    # Checkpoints
     os.makedirs('checkpoints', exist_ok=True)
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -46,7 +48,7 @@ def handler(job):
     for url in urls:
         target = os.path.join('checkpoints', os.path.basename(url))
         if not os.path.exists(target):
-            subprocess.run(["wget", "-q", "-O", target, url])
+            os.system(f"wget -q -O {target} {url}")
 
     job_input = job['input']
     img_url = job_input.get('image_url')
@@ -57,19 +59,19 @@ def handler(job):
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
         
-        # Download sorgenti
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
 
-        # DeepFace
+        # Analisi Genere
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
         # Audio
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        # Video
+        # SadTalker Inference
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
+        print(">>> Inizio rendering video...")
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img,
@@ -78,7 +80,7 @@ def handler(job):
             "--still", "--preprocess", "resize"
         ], env=env, check=True)
 
-        # Upload Cloudflare R2
+        # Upload R2
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
             out_name = f"{uuid.uuid4()}.mp4"
@@ -93,7 +95,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], r2_conf["bucket"], out_name)
             return {"video_url": f"{r2_conf['public']}/{out_name}"}
         
-        return {"error": "Video non generato."}
+        return {"error": "Video non trovato."}
     except Exception as e:
         return {"error": str(e)}
 

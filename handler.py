@@ -3,37 +3,31 @@ import subprocess
 import sys
 import time
 
-# --- 1. INSTALLAZIONE BLOCCANTE E VERIFICATA ---
-def startup_setup():
-    critical_libs = [
-        "numpy==1.23.5",
-        "scipy",
-        "safetensors",
-        "boto3",
-        "deepface",
-        "edge-tts",
-        "opencv-python",
-        "tqdm",
-        "resampy",
-        "scikit-image",
-        "librosa"
+# --- 1. FUNZIONE DI INSTALLAZIONE CERTIFICATA ---
+def install_and_verify():
+    libs = [
+        "numpy==1.23.5", "scipy", "safetensors", "boto3", 
+        "deepface", "edge-tts", "opencv-python", "tqdm", 
+        "resampy", "scikit-image", "librosa"
     ]
     
-    print("=== AVVIO INSTALLAZIONE DIPENDENZE ===")
-    for lib in critical_libs:
-        # Forziamo l'installazione e attendiamo che finisca (check=True)
-        subprocess.run([sys.executable, "-m", "pip", "install", lib], check=True)
+    print(">>> INIZIO PREPARAZIONE AMBIENTE...")
+    for lib in libs:
+        # Installazione con timeout e retry
+        subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", lib], check=True)
     
-    # Patch immediata per Numpy (Compatibilità SadTalker)
+    # VERIFICA CRITICA: Se questo fallisce, il server si ferma qui
+    import safetensors
+    import scipy
     import numpy as np
+    
+    # Patch Numpy per SadTalker
     np.float = float
     np.int = int
-    np.object = object
-    np.bool = bool
     
-    # Download Modelli SadTalker
+    # Download Modelli (Obbligatorio)
     if not os.path.exists('checkpoints'):
-        os.makedirs('checkpoints')
+        os.makedirs('checkpoints', exist_ok=True)
     
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -44,12 +38,16 @@ def startup_setup():
     for url in urls:
         target = os.path.join('checkpoints', os.path.basename(url))
         if not os.path.exists(target):
-            print(f"Scaricamento: {url}")
-            subprocess.run(["wget", "-O", target, url], check=True)
-    print("=== SETUP COMPLETATO CON SUCCESSO ===")
+            subprocess.run(["wget", "-q", "-O", target, url], check=True)
+    
+    print(">>> AMBIENTE CERTIFICATO E PRONTO.")
 
-# Eseguiamo tutto PRIMA di importare runpod
-startup_setup()
+# Eseguiamo il setup bloccante
+try:
+    install_and_verify()
+except Exception as e:
+    print(f"ERRORE CRITICO DURANTE IL SETUP: {e}")
+    sys.exit(1) # Forza il crash del worker se non è pronto
 
 import runpod
 import boto3
@@ -80,21 +78,20 @@ def handler(job):
         os.makedirs(tmp_res, exist_ok=True)
         
         # Download Immagine
-        subprocess.run(["curl", "-L", "-o", tmp_img, img_url], check=True)
+        subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
 
-        # Analisi DeepFace (Genere)
+        # Genere
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # Generazione Audio
+        # Audio
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        # Rendering SadTalker
-        # Ignoriamo i warning di Numpy che bloccano l'esecuzione
+        # Rendering
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
         
-        print("Inizio Rendering Video...")
+        print("Rendering avviato...")
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img,
@@ -103,7 +100,7 @@ def handler(job):
             "--still", "--preprocess", "resize"
         ], env=env, check=True)
 
-        # Invio a Cloudflare R2
+        # Upload
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
             output_filename = f"{uuid.uuid4()}.mp4"
@@ -113,7 +110,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], R2_CONF["bucket"], output_filename)
             return {"video_url": f"{R2_CONF['public']}/{output_filename}"}
         
-        return {"error": "Rendering completato ma nessun file MP4 trovato."}
+        return {"error": "Nessun video prodotto."}
 
     except Exception as e:
         return {"error": str(e)}

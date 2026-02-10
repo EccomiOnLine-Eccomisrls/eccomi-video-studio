@@ -3,19 +3,21 @@ import subprocess
 import sys
 import time
 
-# --- 1. SETUP AMBIENTE E CURA DEI BUG ---
+# --- 1. SETUP AMBIENTE COMPLETO (v36) ---
 def startup_setup():
+    # Aggiunto kornia, yacs e gdown per sicurezza totale
     libs = [
         "numpy==1.23.5", "scipy", "safetensors", "boto3", 
         "deepface", "edge-tts", "opencv-python", "tqdm", 
-        "resampy", "scikit-image", "librosa"
+        "resampy", "scikit-image", "librosa", "kornia==0.6.8",
+        "yacs", "gdown"
     ]
     
-    print(">>> INSTALLAZIONE DIPENDENZE...")
+    print(">>> INSTALLAZIONE DIPENDENZE COMPLETE...")
     for lib in libs:
         subprocess.run([sys.executable, "-m", "pip", "install", lib], check=True)
     
-    # --- OPERAZIONE CHIRURGICA: Rimuoviamo il bug di Numpy nei file di SadTalker ---
+    # --- CURA DEI FILE (Numpy fix) ---
     print(">>> CURA DEI FILE DI SISTEMA...")
     files_to_fix = [
         "src/face3d/util/preprocess.py",
@@ -25,7 +27,6 @@ def startup_setup():
         if os.path.exists(file_path):
             with open(file_path, 'r') as f:
                 content = f.read()
-            # Commentiamo la riga che causa il crash del VisibleDeprecationWarning
             fixed_content = content.replace("np.VisibleDeprecationWarning", "Warning")
             with open(file_path, 'w') as f:
                 f.write(fixed_content)
@@ -64,7 +65,7 @@ def handler(job):
     from deepface import DeepFace
     import numpy as np
     
-    # Patch volante per Numpy
+    # Patch per Numpy
     np.float = float
     np.int = int
 
@@ -80,11 +81,11 @@ def handler(job):
         
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
 
-        # Analisi Genere
+        # Analisi volto
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # Generazione Audio
+        # Audio
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
         # Rendering
@@ -100,7 +101,7 @@ def handler(job):
             "--still", "--preprocess", "resize"
         ], env=env, check=True)
 
-        # Upload
+        # Upload Cloudflare
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
             output_filename = f"{uuid.uuid4()}.mp4"
@@ -110,7 +111,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], R2_CONF["bucket"], output_filename)
             return {"video_url": f"{R2_CONF['public']}/{output_filename}"}
         
-        return {"error": "Nessun video trovato dopo il rendering."}
+        return {"error": "Video non generato."}
 
     except Exception as e:
         return {"error": str(e)}

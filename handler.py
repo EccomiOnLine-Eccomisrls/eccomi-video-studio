@@ -1,52 +1,30 @@
 import os
 import subprocess
 import sys
-import time
+import runpod
 
-# --- 1. SETUP AMBIENTE COMPLETO (v36) ---
+# --- 1. SETUP AMBIENTE (V38) ---
 def startup_setup():
-    # Aggiunto kornia, yacs e gdown per sicurezza totale
+    # Aggiunte facexlib e gfpgan alla lista
     libs = [
         "numpy==1.23.5", "scipy", "safetensors", "boto3", 
         "deepface", "edge-tts", "opencv-python", "tqdm", 
         "resampy", "scikit-image", "librosa", "kornia==0.6.8",
-        "yacs", "gdown"
+        "yacs", "gdown", "facexlib", "gfpgan"
     ]
     
-    print(">>> INSTALLAZIONE DIPENDENZE COMPLETE...")
-    for lib in libs:
-        subprocess.run([sys.executable, "-m", "pip", "install", lib], check=True)
+    print(">>> INSTALLAZIONE DIPENDENZE...")
+    # Installazione silenziosa e rapida
+    subprocess.run([sys.executable, "-m", "pip", "install"] + libs, check=True)
     
     # --- CURA DEI FILE (Numpy fix) ---
-    print(">>> CURA DEI FILE DI SISTEMA...")
-    files_to_fix = [
-        "src/face3d/util/preprocess.py",
-        "inference.py"
-    ]
-    for file_path in files_to_fix:
-        if os.path.exists(file_path):
-            with open(file_path, 'r') as f:
-                content = f.read()
-            fixed_content = content.replace("np.VisibleDeprecationWarning", "Warning")
-            with open(file_path, 'w') as f:
-                f.write(fixed_content)
-            print(f"File curato: {file_path}")
+    for f in ["src/face3d/util/preprocess.py", "inference.py"]:
+        if os.path.exists(f):
+            os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
 
-    # Download Modelli
-    os.makedirs('checkpoints', exist_ok=True)
-    urls = [
-        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
-        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2exp_00300-256.pth",
-        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/facevid2vid_00089-256.pth"
-    ]
-    for url in urls:
-        target = os.path.join('checkpoints', os.path.basename(url))
-        if not os.path.exists(target):
-            subprocess.run(["wget", "-q", "-O", target, url], check=True)
-
+# Eseguiamo il setup all'avvio
 startup_setup()
 
-import runpod
 import boto3
 import uuid
 import glob
@@ -65,14 +43,25 @@ def handler(job):
     from deepface import DeepFace
     import numpy as np
     
-    # Patch per Numpy
+    # Patch volante per Numpy
     np.float = float
     np.int = int
+
+    # Modelli SadTalker (Download se mancanti)
+    os.makedirs('checkpoints', exist_ok=True)
+    urls = [
+        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
+        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2exp_00300-256.pth",
+        "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/facevid2vid_00089-256.pth"
+    ]
+    for url in urls:
+        target = os.path.join('checkpoints', os.path.basename(url))
+        if not os.path.exists(target):
+            subprocess.run(["wget", "-q", "-O", target, url])
 
     job_input = job['input']
     img_url = job_input.get('image_url')
     text = job_input.get('text')
-
     tmp_img, tmp_audio, tmp_res = "/tmp/src.jpg", "/tmp/aud.wav", "/tmp/out"
 
     try:
@@ -81,14 +70,14 @@ def handler(job):
         
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
 
-        # Analisi volto
+        # Genere e Voce
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # Audio
+        # Audio TTS
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        # Rendering
+        # Rendering Video
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
         
@@ -104,15 +93,12 @@ def handler(job):
         # Upload Cloudflare
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
-            output_filename = f"{uuid.uuid4()}.mp4"
-            s3 = boto3.client('s3', endpoint_url=R2_CONF["endpoint"], 
-                             aws_access_key_id=R2_CONF["id"], 
-                             aws_secret_access_key=R2_CONF["key"])
-            s3.upload_file(mp4_files[0], R2_CONF["bucket"], output_filename)
-            return {"video_url": f"{R2_CONF['public']}/{output_filename}"}
+            out_name = f"{uuid.uuid4()}.mp4"
+            s3 = boto3.client('s3', endpoint_url=R2_CONF["endpoint"], aws_access_key_id=R2_CONF["id"], aws_secret_access_key=R2_CONF["key"])
+            s3.upload_file(mp4_files[0], R2_CONF["bucket"], out_name)
+            return {"video_url": f"{R2_CONF['public']}/{out_name}"}
         
-        return {"error": "Video non generato."}
-
+        return {"error": "Nessun video prodotto."}
     except Exception as e:
         return {"error": str(e)}
 

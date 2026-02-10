@@ -3,51 +3,47 @@ import subprocess
 import sys
 import time
 
-# --- 1. FUNZIONE DI INSTALLAZIONE CERTIFICATA ---
-def install_and_verify():
+# --- 1. SETUP AMBIENTE E CURA DEI BUG ---
+def startup_setup():
     libs = [
         "numpy==1.23.5", "scipy", "safetensors", "boto3", 
         "deepface", "edge-tts", "opencv-python", "tqdm", 
         "resampy", "scikit-image", "librosa"
     ]
     
-    print(">>> INIZIO PREPARAZIONE AMBIENTE...")
+    print(">>> INSTALLAZIONE DIPENDENZE...")
     for lib in libs:
-        # Installazione con timeout e retry
-        subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", lib], check=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", lib], check=True)
     
-    # VERIFICA CRITICA: Se questo fallisce, il server si ferma qui
-    import safetensors
-    import scipy
-    import numpy as np
-    
-    # Patch Numpy per SadTalker
-    np.float = float
-    np.int = int
-    
-    # Download Modelli (Obbligatorio)
-    if not os.path.exists('checkpoints'):
-        os.makedirs('checkpoints', exist_ok=True)
-    
+    # --- OPERAZIONE CHIRURGICA: Rimuoviamo il bug di Numpy nei file di SadTalker ---
+    print(">>> CURA DEI FILE DI SISTEMA...")
+    files_to_fix = [
+        "src/face3d/util/preprocess.py",
+        "inference.py"
+    ]
+    for file_path in files_to_fix:
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                content = f.read()
+            # Commentiamo la riga che causa il crash del VisibleDeprecationWarning
+            fixed_content = content.replace("np.VisibleDeprecationWarning", "Warning")
+            with open(file_path, 'w') as f:
+                f.write(fixed_content)
+            print(f"File curato: {file_path}")
+
+    # Download Modelli
+    os.makedirs('checkpoints', exist_ok=True)
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2exp_00300-256.pth",
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/facevid2vid_00089-256.pth"
     ]
-    
     for url in urls:
         target = os.path.join('checkpoints', os.path.basename(url))
         if not os.path.exists(target):
             subprocess.run(["wget", "-q", "-O", target, url], check=True)
-    
-    print(">>> AMBIENTE CERTIFICATO E PRONTO.")
 
-# Eseguiamo il setup bloccante
-try:
-    install_and_verify()
-except Exception as e:
-    print(f"ERRORE CRITICO DURANTE IL SETUP: {e}")
-    sys.exit(1) # Forza il crash del worker se non è pronto
+startup_setup()
 
 import runpod
 import boto3
@@ -66,7 +62,12 @@ R2_CONF = {
 
 def handler(job):
     from deepface import DeepFace
+    import numpy as np
     
+    # Patch volante per Numpy
+    np.float = float
+    np.int = int
+
     job_input = job['input']
     img_url = job_input.get('image_url')
     text = job_input.get('text')
@@ -77,14 +78,13 @@ def handler(job):
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
         
-        # Download Immagine
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
 
-        # Genere
+        # Analisi Genere
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # Audio
+        # Generazione Audio
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
         # Rendering
@@ -110,7 +110,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], R2_CONF["bucket"], output_filename)
             return {"video_url": f"{R2_CONF['public']}/{output_filename}"}
         
-        return {"error": "Nessun video prodotto."}
+        return {"error": "Nessun video trovato dopo il rendering."}
 
     except Exception as e:
         return {"error": str(e)}

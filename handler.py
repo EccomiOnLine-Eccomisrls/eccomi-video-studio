@@ -1,32 +1,28 @@
 import os, subprocess, sys, runpod
 
 def install_missing_packages():
-    # Rimuoviamo il controllo "if os.path.exists" per forzare il check di tutto
-    print(">>> FASE 1: Installazione Forzata Dipendenze v44...")
+    # Se vediamo che DeepFace è già lì, proviamo comunque a forzare il fix di Protobuf
+    print(">>> FASE 1: Pulizia e Fix Protobuf/Numpy...")
     
-    # Installiamo le librerie critiche una per una o in piccoli gruppi per evitare errori silenziosi
+    # 1. Disinstalliamo i sospetti
+    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "protobuf", "google-cloud-aiplatform", "google-api-core"], stdout=subprocess.DEVNULL)
+    
+    # 2. Installiamo le versioni specifiche che NON crashano
     libs = [
-        "numpy==1.23.5", 
+        "numpy==1.23.5",
         "protobuf==3.20.3", 
         "safetensors", 
         "kornia==0.6.8", 
         "facexlib", 
         "gfpgan", 
-        "deepface", 
+        "deepface==0.0.79", # Versione specifica più stabile
         "edge-tts", 
         "boto3",
-        "scipy",
-        "tqdm",
-        "resampy",
-        "scikit-image",
-        "librosa",
-        "yacs"
+        "scipy==1.10.1"
     ]
-    
-    # Installazione con check immediato
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
     
-    # Patch per Numpy dtypes (fondamentale per evitare il crash visto prima)
+    # Patch manuale per Numpy (per evitare l'altro errore 'dtypes')
     try:
         import numpy as np
         if not hasattr(np, 'dtypes'):
@@ -34,22 +30,22 @@ def install_missing_packages():
             np.dtypes = Dtypes()
     except: pass
 
-    # Fix file SadTalker
+    # Fix file SadTalker per la compatibilità Numpy
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
-    print(">>> Ambiente v44 PRONTO.")
+    print(">>> Ambiente v45 PRONTO.")
 
 def handler(job):
     install_missing_packages()
     import boto3, uuid, glob, shutil
-    # Importiamo qui dentro DOPO l'installazione
     import numpy as np
+    
+    # Importante: Importiamo DeepFace solo qui dentro
     from deepface import DeepFace
     
     np.float, np.int = float, int
     
-    # Setup cartelle e modelli
     os.makedirs('checkpoints', exist_ok=True)
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -71,18 +67,19 @@ def handler(job):
         
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
         
-        # Analisi volto
-        objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
-        voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
+        # Analisi volto con gestione errore se DeepFace fa i capricci
+        try:
+            objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
+            voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
+        except:
+            voice = "it-IT-GiuseppeNeural" # Fallback se l'analisi fallisce
         
-        # Generazione Audio
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        print(">>> Rendering video v44 in corso...")
+        print(">>> Rendering video v45...")
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
         
-        # Esecuzione SadTalker
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img, 
@@ -93,7 +90,6 @@ def handler(job):
             "--enhancer", "gfpgan"
         ], env=env, check=True)
 
-        # Upload Risultato
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
             out_name = f"{uuid.uuid4()}.mp4"
@@ -104,7 +100,7 @@ def handler(job):
             r2.upload_file(mp4_files[-1], "eccomionline-video", out_name)
             return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
         
-        return {"error": "Video non trovato."}
+        return {"error": "Generazione fallita."}
     except Exception as e:
         return {"error": str(e)}
 

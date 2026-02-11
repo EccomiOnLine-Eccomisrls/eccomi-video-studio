@@ -1,12 +1,12 @@
 import os, subprocess, sys, runpod
 
 def install_missing_packages():
-    # Se le librerie base ci sono, aggiungiamo solo quelle mancanti
-    print(">>> FASE 1: Installazione v48 (Fix Pydub/FFmpeg)...")
+    print(">>> FASE 1: Installazione v49 (Set Audio Completo)...")
+    # Aggiunte librosa, resampy e soundfile per la sincronizzazione labiale
     libs = [
         "numpy==1.23.5", "safetensors", "kornia==0.6.8", "facexlib", 
         "gfpgan", "edge-tts", "boto3", "scipy==1.10.1", "tqdm", "yacs",
-        "pydub", "imageio-ffmpeg", "ffmpy"
+        "pydub", "imageio-ffmpeg", "ffmpy", "librosa", "resampy", "soundfile"
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, stdout=subprocess.DEVNULL)
     
@@ -18,7 +18,6 @@ def install_missing_packages():
         np.float, np.int = float, int
     except: pass
 
-    # Fix per i warning di Numpy nei file sorgente
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
@@ -27,7 +26,6 @@ def handler(job):
     install_missing_packages()
     import boto3, uuid, glob, shutil
     
-    # Checkpoint setup
     os.makedirs('checkpoints', exist_ok=True)
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -48,26 +46,21 @@ def handler(job):
     try:
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
-        
-        # Download immagine
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
         
-        # TTS - Voce
         voice = "it-IT-GiuseppeNeural" if gender == 'male' else "it-IT-ElsaNeural"
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        print(">>> Rendering SadTalker v48 (GPU in azione)...")
+        print(">>> Rendering SadTalker v49 (Inizio generazione video)...")
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
         
-        # Comando principale
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
             "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"
         ], env=env, check=True)
 
-        # Cerca il video generato
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
             out_name = f"{uuid.uuid4()}.mp4"
@@ -78,7 +71,7 @@ def handler(job):
             r2.upload_file(mp4_files[-1], "eccomionline-video", out_name)
             return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
         
-        return {"error": "Generazione completata ma file non trovato."}
+        return {"error": "Video non trovato."}
     except Exception as e:
         return {"error": str(e)}
 

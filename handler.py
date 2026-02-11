@@ -1,19 +1,21 @@
-import os, subprocess, sys, runpod, time
+import os, subprocess, sys, runpod, time, urllib3
+
+# Disabilitiamo i warning per i certificati non verificati (vogliamo solo che funzioni!)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def install_missing_packages():
-    print(">>> FASE 1: Installazione v52 (Fix Codec Video)...")
+    print(">>> FASE 1: Installazione v53 (Bypass SSL)...")
     
-    # 1. Installazione FFmpeg a livello di sistema (CRUCIALE)
+    # 1. FFmpeg di sistema
     try:
         subprocess.run(["apt-get", "update"], stdout=subprocess.DEVNULL)
         subprocess.run(["apt-get", "install", "-y", "ffmpeg"], stdout=subprocess.DEVNULL)
-    except Exception:
-        pass # Se fallisce (es. permessi), ci affidiamo alla libreria python
+    except: pass
         
-    # 2. Downgrade specifico di ImageIO alla versione 2.9.0 (quella che funziona!)
+    # 2. Pacchetti Python (Confermata la config v52 che funziona!)
     libs = [
         "numpy==1.23.5", 
-        "imageio==2.9.0",         # <--- IL FIX E' QUI
+        "imageio==2.9.0", 
         "imageio-ffmpeg", 
         "opencv-python==4.8.0.74", 
         "safetensors", 
@@ -36,7 +38,6 @@ def install_missing_packages():
         np.float, np.int = float, int
     except: pass
 
-    # Solite patch per i warning
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
@@ -70,7 +71,7 @@ def handler(job):
         voice = "it-IT-GiuseppeNeural" if gender == 'male' else "it-IT-ElsaNeural"
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        print(">>> Rendering SadTalker v52 (ImageIO 2.9.0)...")
+        print(">>> Rendering SadTalker v53...")
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
         
@@ -85,14 +86,16 @@ def handler(job):
             video_path = mp4_files[-1]
             out_name = f"{uuid.uuid4()}.mp4"
             
+            # CONFIGURAZIONE SBLOCCATA (verify=False)
             r2_config = Config(connect_timeout=10, retries={'max_attempts': 5})
             r2 = boto3.client('s3', 
                 endpoint_url="https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com", 
                 aws_access_key_id="006d152c1e6e968032f3088b90c330df", 
                 aws_secret_access_key="6a2549124d3b9205d83d959b214cc785",
-                config=r2_config)
+                config=r2_config,
+                verify=False) # <--- QUESTA E' LA CHIAVE MAGICA
             
-            print(f">>> Uploading: {out_name}")
+            print(f">>> Uploading (Bypass SSL): {out_name}")
             for i in range(3):
                 try:
                     r2.upload_file(video_path, "eccomionline-video", out_name)
@@ -101,9 +104,9 @@ def handler(job):
                     print(f"Tentativo {i+1} fallito: {upload_err}")
                     time.sleep(2)
             
-            return {"error": "Upload fallito."}
+            return {"error": "Upload fallito anche senza SSL."}
         
-        return {"error": "Video non generato (controllare logs)."}
+        return {"error": "Video non generato."}
     except Exception as e:
         return {"error": str(e)}
 

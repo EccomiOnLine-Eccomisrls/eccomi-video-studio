@@ -1,13 +1,33 @@
 import os, subprocess, sys, runpod, time
 
 def install_missing_packages():
-    if os.path.exists("/usr/local/lib/python3.10/dist-packages/pydub"):
-        return
-    print(">>> FASE 1: Preparazione v51...")
+    print(">>> FASE 1: Installazione v52 (Fix Codec Video)...")
+    
+    # 1. Installazione FFmpeg a livello di sistema (CRUCIALE)
+    try:
+        subprocess.run(["apt-get", "update"], stdout=subprocess.DEVNULL)
+        subprocess.run(["apt-get", "install", "-y", "ffmpeg"], stdout=subprocess.DEVNULL)
+    except Exception:
+        pass # Se fallisce (es. permessi), ci affidiamo alla libreria python
+        
+    # 2. Downgrade specifico di ImageIO alla versione 2.9.0 (quella che funziona!)
     libs = [
-        "numpy==1.23.5", "opencv-python==4.8.0.74", "safetensors", 
-        "kornia==0.6.8", "facexlib", "gfpgan", "edge-tts", "boto3", 
-        "scipy==1.10.1", "tqdm", "yacs", "pydub", "librosa", "resampy"
+        "numpy==1.23.5", 
+        "imageio==2.9.0",         # <--- IL FIX E' QUI
+        "imageio-ffmpeg", 
+        "opencv-python==4.8.0.74", 
+        "safetensors", 
+        "kornia==0.6.8", 
+        "facexlib", 
+        "gfpgan", 
+        "edge-tts", 
+        "boto3", 
+        "scipy==1.10.1", 
+        "tqdm", 
+        "yacs", 
+        "pydub", 
+        "librosa", 
+        "resampy"
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, stdout=subprocess.DEVNULL)
     
@@ -16,6 +36,7 @@ def install_missing_packages():
         np.float, np.int = float, int
     except: pass
 
+    # Solite patch per i warning
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
@@ -49,20 +70,21 @@ def handler(job):
         voice = "it-IT-GiuseppeNeural" if gender == 'male' else "it-IT-ElsaNeural"
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        print(">>> Rendering SadTalker v51...")
+        print(">>> Rendering SadTalker v52 (ImageIO 2.9.0)...")
+        env = os.environ.copy()
+        env["PYTHONWARNINGS"] = "ignore"
+        
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
             "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"
-        ], check=True)
+        ], env=env, check=True)
 
-        # CERCA IL VIDEO
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
             video_path = mp4_files[-1]
             out_name = f"{uuid.uuid4()}.mp4"
             
-            # CONFIGURAZIONE ROBUSTA R2
             r2_config = Config(connect_timeout=10, retries={'max_attempts': 5})
             r2 = boto3.client('s3', 
                 endpoint_url="https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com", 
@@ -70,8 +92,8 @@ def handler(job):
                 aws_secret_access_key="6a2549124d3b9205d83d959b214cc785",
                 config=r2_config)
             
-            print(f">>> Tentativo upload finale: {out_name}")
-            for i in range(3): # Prova 3 volte
+            print(f">>> Uploading: {out_name}")
+            for i in range(3):
                 try:
                     r2.upload_file(video_path, "eccomionline-video", out_name)
                     return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
@@ -79,9 +101,9 @@ def handler(job):
                     print(f"Tentativo {i+1} fallito: {upload_err}")
                     time.sleep(2)
             
-            return {"error": "Upload fallito dopo 3 tentativi."}
+            return {"error": "Upload fallito."}
         
-        return {"error": "Video non generato."}
+        return {"error": "Video non generato (controllare logs)."}
     except Exception as e:
         return {"error": str(e)}
 

@@ -1,8 +1,9 @@
-import os, subprocess, sys, runpod
+import os, subprocess, sys, runpod, time
 
 def install_missing_packages():
-    print(">>> FASE 1: Installazione v50 (Fix OpenCV/Numpy compatibility)...")
-    # Forziamo versioni specifiche che sappiamo funzionare insieme
+    if os.path.exists("/usr/local/lib/python3.10/dist-packages/pydub"):
+        return
+    print(">>> FASE 1: Preparazione v51...")
     libs = [
         "numpy==1.23.5", "opencv-python==4.8.0.74", "safetensors", 
         "kornia==0.6.8", "facexlib", "gfpgan", "edge-tts", "boto3", 
@@ -12,12 +13,9 @@ def install_missing_packages():
     
     try:
         import numpy as np
-        # Patch definitiva per compatibilità Numpy/OpenCV
-        np.float = float
-        np.int = int
+        np.float, np.int = float, int
     except: pass
 
-    # Fix per i file sorgente
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
@@ -25,9 +23,8 @@ def install_missing_packages():
 def handler(job):
     install_missing_packages()
     import boto3, uuid, glob, shutil
-    import numpy as np
+    from botocore.config import Config
     
-    # Setup modelli
     os.makedirs('checkpoints', exist_ok=True)
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -42,7 +39,6 @@ def handler(job):
     job_input = job['input']
     img_url, text = job_input.get('image_url'), job_input.get('text')
     gender = job_input.get('gender', 'male')
-    
     tmp_img, tmp_audio, tmp_res = "/tmp/src.jpg", "/tmp/aud.wav", "/tmp/out"
 
     try:
@@ -53,28 +49,39 @@ def handler(job):
         voice = "it-IT-GiuseppeNeural" if gender == 'male' else "it-IT-ElsaNeural"
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        print(">>> Rendering SadTalker v50 (GPU in azione)...")
-        env = os.environ.copy()
-        # Forza l'uso di Numpy corretto per OpenCV
-        env["PYTHONWARNINGS"] = "ignore"
-        
+        print(">>> Rendering SadTalker v51...")
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
             "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"
-        ], env=env, check=True)
+        ], check=True)
 
+        # CERCA IL VIDEO
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
+            video_path = mp4_files[-1]
             out_name = f"{uuid.uuid4()}.mp4"
+            
+            # CONFIGURAZIONE ROBUSTA R2
+            r2_config = Config(connect_timeout=10, retries={'max_attempts': 5})
             r2 = boto3.client('s3', 
                 endpoint_url="https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com", 
                 aws_access_key_id="006d152c1e6e968032f3088b90c330df", 
-                aws_secret_access_key="6a2549124d3b9205d83d959b214cc785")
-            r2.upload_file(mp4_files[-1], "eccomionline-video", out_name)
-            return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
+                aws_secret_access_key="6a2549124d3b9205d83d959b214cc785",
+                config=r2_config)
+            
+            print(f">>> Tentativo upload finale: {out_name}")
+            for i in range(3): # Prova 3 volte
+                try:
+                    r2.upload_file(video_path, "eccomionline-video", out_name)
+                    return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
+                except Exception as upload_err:
+                    print(f"Tentativo {i+1} fallito: {upload_err}")
+                    time.sleep(2)
+            
+            return {"error": "Upload fallito dopo 3 tentativi."}
         
-        return {"error": "Generazione completata ma file non trovato."}
+        return {"error": "Video non generato."}
     except Exception as e:
         return {"error": str(e)}
 

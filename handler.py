@@ -1,22 +1,20 @@
 import os, subprocess, sys, runpod, time, urllib3
 
-# Disabilitiamo i warning per i certificati non verificati (vogliamo solo che funzioni!)
+# Bypass SSL (fondamentale per l'upload)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Print immediato per debug (con flush forzato)
+print(">>> CONTAINER AVVIATO: Inizio inizializzazione v54...", flush=True)
+
 def install_missing_packages():
-    print(">>> FASE 1: Installazione v53 (Bypass SSL)...")
+    print(">>> FASE 1: Installazione Librerie Python (No apt-get)...", flush=True)
     
-    # 1. FFmpeg di sistema
-    try:
-        subprocess.run(["apt-get", "update"], stdout=subprocess.DEVNULL)
-        subprocess.run(["apt-get", "install", "-y", "ffmpeg"], stdout=subprocess.DEVNULL)
-    except: pass
-        
-    # 2. Pacchetti Python (Confermata la config v52 che funziona!)
+    # Rimuoviamo apt-get che blocca il sistema. 
+    # Usiamo imageio-ffmpeg che contiene già i binari necessari.
     libs = [
         "numpy==1.23.5", 
-        "imageio==2.9.0", 
-        "imageio-ffmpeg", 
+        "imageio==2.9.0",         # Versione stabile
+        "imageio-ffmpeg",         # Contiene il codec video
         "opencv-python==4.8.0.74", 
         "safetensors", 
         "kornia==0.6.8", 
@@ -31,19 +29,23 @@ def install_missing_packages():
         "librosa", 
         "resampy"
     ]
-    subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, stdout=subprocess.DEVNULL)
+    # Timeout di 120 secondi per evitare che pip si blocchi per sempre
+    subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
     
     try:
         import numpy as np
         np.float, np.int = float, int
     except: pass
 
+    # Patch codice
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
 
 def handler(job):
+    print(">>> FASE 2: Handler ricevuto. Setup ambiente...", flush=True)
     install_missing_packages()
+    
     import boto3, uuid, glob, shutil
     from botocore.config import Config
     
@@ -71,7 +73,7 @@ def handler(job):
         voice = "it-IT-GiuseppeNeural" if gender == 'male' else "it-IT-ElsaNeural"
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        print(">>> Rendering SadTalker v53...")
+        print(">>> Rendering SadTalker v54 (Fast Mode)...", flush=True)
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
         
@@ -86,25 +88,25 @@ def handler(job):
             video_path = mp4_files[-1]
             out_name = f"{uuid.uuid4()}.mp4"
             
-            # CONFIGURAZIONE SBLOCCATA (verify=False)
+            # CONFIGURAZIONE R2 CON BYPASS SSL
             r2_config = Config(connect_timeout=10, retries={'max_attempts': 5})
             r2 = boto3.client('s3', 
                 endpoint_url="https://3320f2693994336c56f7093222830f6a.r2.cloudflarestorage.com", 
                 aws_access_key_id="006d152c1e6e968032f3088b90c330df", 
                 aws_secret_access_key="6a2549124d3b9205d83d959b214cc785",
                 config=r2_config,
-                verify=False) # <--- QUESTA E' LA CHIAVE MAGICA
+                verify=False) # <--- BYPASS SSL ATTIVO
             
-            print(f">>> Uploading (Bypass SSL): {out_name}")
+            print(f">>> Uploading finale: {out_name}", flush=True)
             for i in range(3):
                 try:
                     r2.upload_file(video_path, "eccomionline-video", out_name)
                     return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
                 except Exception as upload_err:
-                    print(f"Tentativo {i+1} fallito: {upload_err}")
+                    print(f"Tentativo {i+1} fallito: {upload_err}", flush=True)
                     time.sleep(2)
             
-            return {"error": "Upload fallito anche senza SSL."}
+            return {"error": "Upload fallito (R2 non raggiungibile)."}
         
         return {"error": "Video non generato."}
     except Exception as e:

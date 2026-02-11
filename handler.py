@@ -1,23 +1,23 @@
 import os, subprocess, sys, runpod
 
 def install_missing_packages():
-    print(">>> FASE 1: Installazione v49 (Set Audio Completo)...")
-    # Aggiunte librosa, resampy e soundfile per la sincronizzazione labiale
+    print(">>> FASE 1: Installazione v50 (Fix OpenCV/Numpy compatibility)...")
+    # Forziamo versioni specifiche che sappiamo funzionare insieme
     libs = [
-        "numpy==1.23.5", "safetensors", "kornia==0.6.8", "facexlib", 
-        "gfpgan", "edge-tts", "boto3", "scipy==1.10.1", "tqdm", "yacs",
-        "pydub", "imageio-ffmpeg", "ffmpy", "librosa", "resampy", "soundfile"
+        "numpy==1.23.5", "opencv-python==4.8.0.74", "safetensors", 
+        "kornia==0.6.8", "facexlib", "gfpgan", "edge-tts", "boto3", 
+        "scipy==1.10.1", "tqdm", "yacs", "pydub", "librosa", "resampy"
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, stdout=subprocess.DEVNULL)
     
     try:
         import numpy as np
-        if not hasattr(np, 'dtypes'):
-            class Dtypes: pass
-            np.dtypes = Dtypes()
-        np.float, np.int = float, int
+        # Patch definitiva per compatibilità Numpy/OpenCV
+        np.float = float
+        np.int = int
     except: pass
 
+    # Fix per i file sorgente
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
@@ -25,7 +25,9 @@ def install_missing_packages():
 def handler(job):
     install_missing_packages()
     import boto3, uuid, glob, shutil
+    import numpy as np
     
+    # Setup modelli
     os.makedirs('checkpoints', exist_ok=True)
     urls = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -51,8 +53,9 @@ def handler(job):
         voice = "it-IT-GiuseppeNeural" if gender == 'male' else "it-IT-ElsaNeural"
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        print(">>> Rendering SadTalker v49 (Inizio generazione video)...")
+        print(">>> Rendering SadTalker v50 (GPU in azione)...")
         env = os.environ.copy()
+        # Forza l'uso di Numpy corretto per OpenCV
         env["PYTHONWARNINGS"] = "ignore"
         
         subprocess.run([
@@ -71,7 +74,7 @@ def handler(job):
             r2.upload_file(mp4_files[-1], "eccomionline-video", out_name)
             return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
         
-        return {"error": "Video non trovato."}
+        return {"error": "Generazione completata ma file non trovato."}
     except Exception as e:
         return {"error": str(e)}
 

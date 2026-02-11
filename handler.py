@@ -4,27 +4,30 @@ import sys
 import runpod
 
 def install_missing_packages():
-    print(">>> Pulizia e allineamento versioni (Protobuf Fix)...")
-    # Forziamo protobuf e le basi prima del resto per evitare il conflitto del log
-    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "protobuf==3.20.3"], stdout=subprocess.DEVNULL)
+    print(">>> FASE 1: Allineamento Protobuf e Numpy (Versione Blindata)...")
+    # Installiamo prima le fondamenta e blocchiamo Numpy
+    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], stdout=subprocess.DEVNULL)
+    subprocess.run([sys.executable, "-m", "pip", "install", "protobuf==3.20.3", "numpy==1.23.5"], stdout=subprocess.DEVNULL)
     
-    print(">>> Installazione dipendenze AI...")
+    print(">>> FASE 2: Installazione librerie AI (Senza aggiornare Numpy)...")
     libs = [
-        "numpy==1.23.5", "scipy", "safetensors", "boto3", 
-        "deepface", "edge-tts", "opencv-python", "tqdm", 
-        "resampy", "scikit-image", "librosa", "kornia==0.6.8",
-        "yacs", "gdown", "facexlib", "gfpgan"
+        "scipy", "safetensors", "boto3", "deepface", "edge-tts", 
+        "opencv-python", "tqdm", "resampy", "scikit-image", 
+        "librosa", "kornia==0.6.8", "yacs", "gdown", "facexlib", "gfpgan"
     ]
+    # Usiamo --no-deps o semplicemente installiamo sperando che l'ordine aiuti
     subprocess.run([sys.executable, "-m", "pip", "install"] + libs, stdout=subprocess.DEVNULL)
     
-    # Fix per Numpy
+    # Riaffermiamo Numpy 1.23.5 alla fine per sicurezza
+    subprocess.run([sys.executable, "-m", "pip", "install", "numpy==1.23.5"], stdout=subprocess.DEVNULL)
+
+    # Fix chirurgico per i file
     for f in ["src/face3d/util/preprocess.py", "inference.py"]:
         if os.path.exists(f):
             os.system(f"sed -i 's/np.VisibleDeprecationWarning/Warning/g' {f}")
-    print(">>> Ambiente allineato e pronto.")
+    print(">>> Ambiente pronto e Numpy bloccato alla 1.23.5.")
 
 def handler(job):
-    # Eseguiamo il setup all'interno del job
     install_missing_packages()
     
     import boto3
@@ -34,7 +37,7 @@ def handler(job):
     from deepface import DeepFace
     import numpy as np
     
-    # Patch Numpy
+    # Patch Numpy per compatibilità
     np.float = float
     np.int = int
 
@@ -60,18 +63,14 @@ def handler(job):
         os.makedirs(tmp_res, exist_ok=True)
         
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
-
-        # Analisi Genere
         objs = DeepFace.analyze(img_path=tmp_img, actions=['gender'], enforce_detection=False)
         voice = "it-IT-GiuseppeNeural" if objs[0]['dominant_gender'] == "Man" else "it-IT-ElsaNeural"
 
-        # Audio
         subprocess.run(["edge-tts", "--text", text, "--voice", voice, "--write-media", tmp_audio], check=True)
         
-        # SadTalker Inference
+        print(">>> Rendering video in corso...")
         env = os.environ.copy()
         env["PYTHONWARNINGS"] = "ignore"
-        print(">>> Inizio rendering video...")
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img,
@@ -80,7 +79,6 @@ def handler(job):
             "--still", "--preprocess", "resize"
         ], env=env, check=True)
 
-        # Upload R2
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
         if mp4_files:
             out_name = f"{uuid.uuid4()}.mp4"
@@ -95,7 +93,7 @@ def handler(job):
             s3.upload_file(mp4_files[0], r2_conf["bucket"], out_name)
             return {"video_url": f"{r2_conf['public']}/{out_name}"}
         
-        return {"error": "Video non trovato."}
+        return {"error": "Video non generato."}
     except Exception as e:
         return {"error": str(e)}
 

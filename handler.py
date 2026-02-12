@@ -3,18 +3,16 @@ import os, subprocess, sys, runpod, time, uuid, glob, shutil
 print(">>> CONTAINER AVVIATO: Inizio v64 (Fix Unzip + RClone)...", flush=True)
 
 def install_essentials():
-    print(">>> Aggiornamento sistema e installazione 'unzip'...", flush=True)
+    print(">>> 1. Aggiornamento sistema e installazione 'unzip'...", flush=True)
     try:
-        # 1. Installiamo 'unzip' che manca nel container
+        # Installiamo unzip che manca nel container (causa del fallimento v63)
         subprocess.run("apt-get update && apt-get install -y unzip", shell=True, check=True)
-        
-        # 2. Ora installiamo RClone
-        print(">>> Installazione RClone...", flush=True)
+        print(">>> 2. Installazione RClone (Il Bulldozer)...", flush=True)
         subprocess.run("curl https://rclone.org/install.sh | bash", shell=True, check=True)
     except Exception as e:
-        print(f">>> ERRORE installazione sistema: {e}", flush=True)
+        print(f">>> ERRORE installazione componenti: {e}", flush=True)
 
-    print(">>> Installazione librerie Python...", flush=True)
+    print(">>> 3. Installazione librerie Python...", flush=True)
     libs = [
         "numpy==1.23.5", "imageio==2.9.0", "imageio-ffmpeg", 
         "opencv-python==4.8.0.74", "safetensors", "kornia==0.6.8", 
@@ -37,6 +35,7 @@ acl = public-read
     os.makedirs(rclone_path, exist_ok=True)
     with open(os.path.join(rclone_path, "rclone.conf"), "w") as f:
         f.write(conf)
+    print(">>> RClone configurato.", flush=True)
 
 def handler(job):
     install_essentials()
@@ -65,7 +64,7 @@ def handler(job):
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> Avvio Rendering AI...", flush=True)
+        print(">>> Avvio Rendering AI (SadTalker)...", flush=True)
         subprocess.run([
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
@@ -77,10 +76,11 @@ def handler(job):
             video_path = max(mp4_files, key=os.path.getctime)
             out_name = f"{uuid.uuid4()}.mp4"
             
-            print(f">>> Caricamento con RClone: {out_name}", flush=True)
-            # Usiamo --no-check-certificate come paracadute finale
+            print(f">>> CARICAMENTO VIA RCLONE: {out_name}", flush=True)
+            # RClone usa i suoi certificati, bypassando il bug SSL di Python
             subprocess.run(["rclone", "copyto", video_path, f"r2:eccomionline-video/{out_name}", "--no-check-certificate"], check=True)
             
+            print(f">>> TRAGUARDO RAGGIUNTO!", flush=True)
             return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
         
         return {"error": "Video non generato."}

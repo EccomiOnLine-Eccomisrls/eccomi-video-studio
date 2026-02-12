@@ -1,4 +1,4 @@
-import os, subprocess, sys, runpod, time, uuid, glob, shutil, urllib3
+import os, subprocess, sys, runpod, time, uuid, glob, shutil, urllib3, ssl
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.ssl_ import create_urllib3_context
@@ -6,12 +6,14 @@ from requests.packages.urllib3.util.ssl_ import create_urllib3_context
 # Disabilitiamo i messaggi di avviso SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-print(">>> CONTAINER AVVIATO: Inizio v60 (Forzatura TLS 1.2)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio v61 (Fix Coerenza SSL)...", flush=True)
 
-# Un "adattatore" speciale per forzare il container a usare TLS moderno
+# Adattatore corretto per evitare il conflitto "verify_mode/check_hostname"
 class TLSAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         context = create_urllib3_context()
+        context.check_hostname = False  # <--- FIX: Disattiviamo il controllo hostname
+        context.verify_mode = ssl.CERT_NONE # <--- FIX: Disattiviamo la verifica certificato
         kwargs['ssl_context'] = context
         return super(TLSAdapter, self).init_poolmanager(*args, **kwargs)
 
@@ -67,19 +69,18 @@ def handler(job):
             endpoint = "https://b8fa6b2877ee48bcac3b22e0665726e1.r2.cloudflarestorage.com"
             bucket = "eccomionline-video"
             
-            # Creiamo l'autenticazione S3 per 'requests'
             auth = AWS4Auth(access_key, secret_key, 'us-east-1', 's3')
             upload_url = f"{endpoint}/{bucket}/{out_name}"
             
-            print(f">>> Tentativo Upload alternativo: {out_name}", flush=True)
+            print(f">>> Tentativo Upload v61 su: {out_name}", flush=True)
             
             with open(video_path, 'rb') as f:
                 s = requests.Session()
-                s.mount(endpoint, TLSAdapter()) # Forziamo il TLS moderno
+                s.mount("https://", TLSAdapter()) 
                 r = s.put(upload_url, auth=auth, data=f, verify=False)
             
             if r.status_code == 200:
-                print(f">>> UPLOAD RIUSCITO CON METODO REQUESTS!", flush=True)
+                print(f">>> UPLOAD RIUSCITO!", flush=True)
                 return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
             else:
                 raise Exception(f"Errore server: {r.status_code} - {r.text}")

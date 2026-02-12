@@ -1,23 +1,32 @@
 import os, subprocess, sys, runpod, time, uuid, glob, shutil, urllib3
+import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.ssl_ import create_urllib3_context
 
 # Disabilitiamo i messaggi di avviso SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-print(">>> CONTAINER AVVIATO: Inizio v59 (Fix SSL Handshake)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio v60 (Forzatura TLS 1.2)...", flush=True)
+
+# Un "adattatore" speciale per forzare il container a usare TLS moderno
+class TLSAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        context = create_urllib3_context()
+        kwargs['ssl_context'] = context
+        return super(TLSAdapter, self).init_poolmanager(*args, **kwargs)
 
 def install_missing_packages():
-    # Aggiunte librerie specifiche per risolvere il problema SSL Handshake
     libs = [
-        "pip", "setuptools", "pyopenssl", "cryptography", "idna",
         "numpy==1.23.5", "imageio==2.9.0", "imageio-ffmpeg", 
         "opencv-python==4.8.0.74", "safetensors", "kornia==0.6.8", 
         "facexlib", "gfpgan", "edge-tts", "scipy==1.10.1", 
-        "pydub", "librosa", "resampy", "boto3", "yacs", "tqdm", "pyyaml"
+        "pydub", "librosa", "resampy", "boto3", "yacs", "tqdm", "pyyaml", "requests-aws4auth"
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True, stdout=subprocess.DEVNULL)
 
 def handler(job):
     install_missing_packages()
+    from requests_aws4auth import AWS4Auth
     
     os.makedirs('checkpoints', exist_ok=True)
     urls = [
@@ -37,7 +46,6 @@ def handler(job):
     try:
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
-        
         subprocess.run(["curl", "-L", "-s", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
@@ -53,31 +61,30 @@ def handler(job):
             video_path = max(mp4_files, key=os.path.getctime)
             out_name = f"{uuid.uuid4()}.mp4"
             
-            import boto3
-            from botocore.config import Config
-            
+            # Parametri Cloudflare
+            access_key = "006d152c1e6e968032f3088b90c330df"
+            secret_key = "6a2549124d3b9205d83d959b214cc785"
             endpoint = "https://b8fa6b2877ee48bcac3b22e0665726e1.r2.cloudflarestorage.com"
+            bucket = "eccomionline-video"
             
-            # Usiamo us-east-1 che è più compatibile per il handshake iniziale
-            s3_client = boto3.client('s3',
-                endpoint_url=endpoint,
-                aws_access_key_id="006d152c1e6e968032f3088b90c330df",
-                aws_secret_access_key="6a2549124d3b9205d83d959b214cc785",
-                region_name="us-east-1", 
-                verify=False,
-                config=Config(
-                    signature_version='s3v4',
-                    retries={'max_attempts': 3},
-                    s3={'addressing_style': 'path'} # Forza lo stile che ha funzionato parzialmente
-                ))
+            # Creiamo l'autenticazione S3 per 'requests'
+            auth = AWS4Auth(access_key, secret_key, 'us-east-1', 's3')
+            upload_url = f"{endpoint}/{bucket}/{out_name}"
             
-            print(f">>> Tentativo Upload su: {out_name}", flush=True)
-            s3_client.upload_file(video_path, "eccomionline-video", out_name)
-            print(f">>> UPLOAD RIUSCITO!", flush=True)
+            print(f">>> Tentativo Upload alternativo: {out_name}", flush=True)
             
-            return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
+            with open(video_path, 'rb') as f:
+                s = requests.Session()
+                s.mount(endpoint, TLSAdapter()) # Forziamo il TLS moderno
+                r = s.put(upload_url, auth=auth, data=f, verify=False)
+            
+            if r.status_code == 200:
+                print(f">>> UPLOAD RIUSCITO CON METODO REQUESTS!", flush=True)
+                return {"video_url": f"https://pub-3ca6a3559a564d63bf0900e62cbb23c8.r2.dev/{out_name}"}
+            else:
+                raise Exception(f"Errore server: {r.status_code} - {r.text}")
         
-        return {"error": "Video non generato correttamente."}
+        return {"error": "Video non generato."}
     except Exception as e:
         print(f">>> ERRORE FINALE: {str(e)}", flush=True)
         return {"error": str(e)}

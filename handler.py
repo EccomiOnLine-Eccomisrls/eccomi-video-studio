@@ -1,24 +1,25 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: Inizio V68 (Deep Clean & Fix AI)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio V69 (Fix Dipendenze & Numpy)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Installazione librerie base...", flush=True)
+    print(">>> 1. Pulizia e installazione librerie corrette...", flush=True)
+    # Rimuoviamo le versioni specifiche che causano il TypeError
     libs = [
-        "numpy==1.23.5", "imageio==2.9.0", "imageio-ffmpeg", 
-        "opencv-python==4.8.0.74", "edge-tts", "safetensors", 
-        "kornia==0.6.8", "tqdm", "yacs", "pyyaml", "gfpgan", "facexlib"
+        "imageio==2.9.0", "imageio-ffmpeg", "opencv-python-headless", 
+        "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
+        "pyyaml", "gfpgan", "facexlib", "scikit-image", "librosa", "resampy"
     ]
+    # Installiamo senza forzare numpy, lasciamo che pip risolva i conflitti
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
     
-    # Assicuriamoci che i modelli facciali siano pronti
-    print(">>> 2. Setup motori di miglioramento volto...", flush=True)
+    print(">>> 2. Setup finale motori...", flush=True)
     subprocess.run([sys.executable, "-m", "pip", "install", "basicsr"], check=True)
 
 def handler(job):
     install_essentials()
     
-    # Download modelli SadTalker
+    # Download modelli
     os.makedirs('checkpoints', exist_ok=True)
     models = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -28,34 +29,28 @@ def handler(job):
     for url in models:
         target = os.path.join('checkpoints', os.path.basename(url))
         if not os.path.exists(target):
-            print(f">>> Scarico modello: {os.path.basename(url)}", flush=True)
             subprocess.run(["curl", "-k", "-L", "-o", target, url])
 
     job_input = job['input']
-    img_url = job_input.get('image_url')
-    text = job_input.get('text')
+    img_url, text = job_input.get('image_url'), job_input.get('text')
     tmp_img, tmp_audio, tmp_res = "/tmp/src.jpg", "/tmp/aud.wav", "/tmp/out"
 
     try:
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
         
-        print(">>> Preparazione file sorgente...", flush=True)
+        # Download risorse
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (Questa operazione richiede tempo)...", flush=True)
-        # Usiamo un timeout lungo per evitare che il processo venga ucciso
+        print(">>> AVVIO RENDERING AI (Fase critica)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
-            "--source_image", tmp_img,
-            "--driven_audio", tmp_audio,
-            "--result_dir", tmp_res,
-            "--still",
-            "--preprocess", "resize",
-            "--enhancer", "gfpgan"
+            "--source_image", tmp_img, "--driven_audio", tmp_audio,
+            "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"
         ]
         
+        # Monitoriamo i log in tempo reale
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print(f"AI LOG: {line.strip()}", flush=True)
@@ -70,10 +65,9 @@ def handler(job):
             upload_cmd = f"curl -k --upload-file {video_path} https://transfer.sh/{out_name}"
             download_link = subprocess.check_output(upload_cmd, shell=True).decode().strip()
             
-            print(f">>> LINK FINALE: {download_link}", flush=True)
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Il motore AI non ha prodotto il file MP4. Controlla i log sopra."}
+        return {"error": "Il rendering è terminato senza produrre un video. Controlla i log sopra."}
     except Exception as e:
         return {"error": str(e)}
 

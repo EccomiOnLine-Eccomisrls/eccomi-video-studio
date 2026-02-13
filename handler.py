@@ -1,6 +1,6 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: V82 (Final Injection Fix)...", flush=True)
+print(">>> CONTAINER AVVIATO: V83 (The Nuclear Option)...", flush=True)
 
 def install_essentials():
     print(">>> 1. Installazione librerie...", flush=True)
@@ -16,13 +16,13 @@ def install_essentials():
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-t", target_dir] + libs, check=True)
 
-    print(">>> 2. CHIRURGIA V82: Iniezione corretta...", flush=True)
-    # Fix Torchvision: Aggiungiamo 'import torchvision' altrimenti va in NameError
-    injection = "import sys, torchvision; import torchvision.transforms.functional as F; sys.modules['torchvision.transforms.functional_tensor'] = F; "
-    subprocess.run(f"sed -i '1i {injection}' inference.py", shell=True)
+    print(">>> 2. CHIRURGIA NUCLEARE V83...", flush=True)
+    # Rimuoviamo il riferimento al modulo mancante direttamente nei file che lo usano
+    subprocess.run("find . -name '*.py' -exec sed -i 's/from torchvision.transforms.functional_tensor import/import torchvision.transforms.functional as/g' {} +", shell=True)
+    subprocess.run("find . -name '*.py' -exec sed -i 's/import torchvision.transforms.functional_tensor/import torchvision.transforms.functional as functional_tensor/g' {} +", shell=True)
     
-    # Fix Numpy
-    subprocess.run(f"find . -name '*.py' -exec sed -i 's/np.float/float/g' {{}} +", shell=True)
+    # Fix solito per Numpy
+    subprocess.run("find . -name '*.py' -exec sed -i 's/np.float/float/g' {} +", shell=True)
 
 def handler(job):
     install_essentials()
@@ -30,7 +30,7 @@ def handler(job):
     custom_env["PYTHONPATH"] = f"/tmp/custom_libs:{os.getcwd()}"
     
     os.makedirs('checkpoints', exist_ok=True)
-    # (Logica download modelli...)
+    # I modelli verranno scaricati automaticamente...
 
     job_input = job['input']
     img_url, text = job_input.get('image_url'), job_input.get('text')
@@ -42,7 +42,7 @@ def handler(job):
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI...", flush=True)
+        print(">>> AVVIO RENDERING (V83)...", flush=True)
         cmd = [sys.executable, "inference.py", "--source_image", tmp_img, "--driven_audio", tmp_audio, "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"]
         
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=custom_env)
@@ -56,7 +56,7 @@ def handler(job):
             out_name = f"video_{uuid.uuid4().hex[:8]}.mp4"
             link = subprocess.check_output(f"curl -k --upload-file {video_path} https://transfer.sh/{out_name}", shell=True).decode().strip()
             return {"status": "success", "video_url": link}
-        return {"error": "Rendering ok, ma nessun video. Controlla i log."}
+        return {"error": "Rendering finito ma niente video."}
     except Exception as e:
         return {"error": str(e)}
 

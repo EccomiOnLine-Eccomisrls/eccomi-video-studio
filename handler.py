@@ -1,28 +1,19 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: Inizio V70 (Force Reinstall & Dependency Fix)...", flush=True)
+print(">>> CONTAINER AVVIATO: V70.1 (Adding Pydub & Scipy)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Pulizia profonda librerie esistenti...", flush=True)
-    # Disinstalliamo tutto ciò che crea conflitto
-    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "numpy", "scikit-image", "opencv-python-headless"], check=False)
-    
-    print(">>> 2. Installazione versioni certificate (Anti-TypeError)...", flush=True)
-    # Forziamo le versioni che NON danno il TypeError con SadTalker
+    print(">>> 1. Installazione librerie certificate...", flush=True)
     libs = [
-        "numpy==1.23.5", 
-        "scikit-image==0.19.3",
-        "imageio==2.9.0", 
-        "imageio-ffmpeg", 
-        "opencv-python-headless==4.8.0.74", 
-        "edge-tts", "safetensors", "kornia==0.6.8", 
-        "tqdm", "yacs", "pyyaml", "gfpgan", "facexlib", 
-        "librosa", "resampy", "basicsr"
+        "numpy==1.23.5", "scikit-image==0.19.3", "imageio==2.9.0", 
+        "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", 
+        "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
+        "pyyaml", "gfpgan", "facexlib", "librosa", "resampy", 
+        "basicsr", "pydub", "scipy==1.10.1" # <--- I PEZZI MANCANTI
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
 
 def handler(job):
-    # Installazione ogni volta per garantire che il container sia pulito
     install_essentials()
     
     os.makedirs('checkpoints', exist_ok=True)
@@ -47,7 +38,7 @@ def handler(job):
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (V70 - No More TypeErrors)...", flush=True)
+        print(">>> AVVIO RENDERING AI (V70.1)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
@@ -70,7 +61,7 @@ def handler(job):
             
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Il rendering è fallito. Controlla gli AI LOG sopra."}
+        return {"error": "Il rendering è terminato senza video. Controlla gli AI LOG."}
     except Exception as e:
         return {"error": str(e)}
 

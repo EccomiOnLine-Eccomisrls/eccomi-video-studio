@@ -1,9 +1,14 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: Inizio V75 (Chirurgia del Codice)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio V76 (Forced OpenCV Purge)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Installazione librerie moderne...", flush=True)
+    print(">>> 1. ELIMINAZIONE FISICA OPENCV 4.11...", flush=True)
+    # Rimuoviamo forzatamente i file di sistema che causano il crash
+    subprocess.run("rm -rf /usr/local/lib/python3.10/dist-packages/cv2*", shell=True)
+    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "opencv-python", "opencv-python-headless"], check=False)
+
+    print(">>> 2. Installazione Pulita...", flush=True)
     libs = [
         "numpy==1.23.5", "scikit-image==0.19.3", "imageio==2.9.0", 
         "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", 
@@ -13,8 +18,7 @@ def install_essentials():
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
 
-    print(">>> 2. CHIRURGIA: Correzione automatica dei file SadTalker...", flush=True)
-    # Questo comando trova ogni 'np.float' e lo trasforma in 'float' nei file del motore
+    print(">>> 3. CHIRURGIA: Fix Numpy float...", flush=True)
     subprocess.run("find . -name '*.py' -exec sed -i 's/np.float/float/g' {} +", shell=True)
 
 def handler(job):
@@ -42,7 +46,7 @@ def handler(job):
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (V75 - Il momento della verità)...", flush=True)
+        print(">>> AVVIO RENDERING AI (V76 - Clean OpenCV)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
@@ -65,7 +69,7 @@ def handler(job):
             
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Rendering fallito dopo la chirurgia. Controlla i log."}
+        return {"error": "Video non trovato. Controlla i log AI."}
     except Exception as e:
         return {"error": str(e)}
 

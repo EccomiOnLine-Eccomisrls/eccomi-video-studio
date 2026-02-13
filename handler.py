@@ -1,25 +1,30 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: Inizio V69 (Fix Dipendenze & Numpy)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio V70 (Force Reinstall & Dependency Fix)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Pulizia e installazione librerie corrette...", flush=True)
-    # Rimuoviamo le versioni specifiche che causano il TypeError
-    libs = [
-        "imageio==2.9.0", "imageio-ffmpeg", "opencv-python-headless", 
-        "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
-        "pyyaml", "gfpgan", "facexlib", "scikit-image", "librosa", "resampy"
-    ]
-    # Installiamo senza forzare numpy, lasciamo che pip risolva i conflitti
-    subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
+    print(">>> 1. Pulizia profonda librerie esistenti...", flush=True)
+    # Disinstalliamo tutto ciò che crea conflitto
+    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "numpy", "scikit-image", "opencv-python-headless"], check=False)
     
-    print(">>> 2. Setup finale motori...", flush=True)
-    subprocess.run([sys.executable, "-m", "pip", "install", "basicsr"], check=True)
+    print(">>> 2. Installazione versioni certificate (Anti-TypeError)...", flush=True)
+    # Forziamo le versioni che NON danno il TypeError con SadTalker
+    libs = [
+        "numpy==1.23.5", 
+        "scikit-image==0.19.3",
+        "imageio==2.9.0", 
+        "imageio-ffmpeg", 
+        "opencv-python-headless==4.8.0.74", 
+        "edge-tts", "safetensors", "kornia==0.6.8", 
+        "tqdm", "yacs", "pyyaml", "gfpgan", "facexlib", 
+        "librosa", "resampy", "basicsr"
+    ]
+    subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
 
 def handler(job):
+    # Installazione ogni volta per garantire che il container sia pulito
     install_essentials()
     
-    # Download modelli
     os.makedirs('checkpoints', exist_ok=True)
     models = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -39,18 +44,16 @@ def handler(job):
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
         
-        # Download risorse
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (Fase critica)...", flush=True)
+        print(">>> AVVIO RENDERING AI (V70 - No More TypeErrors)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
             "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"
         ]
         
-        # Monitoriamo i log in tempo reale
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print(f"AI LOG: {line.strip()}", flush=True)
@@ -67,7 +70,7 @@ def handler(job):
             
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Il rendering è terminato senza produrre un video. Controlla i log sopra."}
+        return {"error": "Il rendering è fallito. Controlla gli AI LOG sopra."}
     except Exception as e:
         return {"error": str(e)}
 

@@ -1,12 +1,19 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: Inizio V73 (Numpy Compatibility Fix)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio V74 (Numpy 1.19.5 - The Time Machine)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Installazione librerie certificate...", flush=True)
+    print(">>> 1. Downgrade Forzato Numpy (Anti-AttributeError)...", flush=True)
+    # Rimuoviamo tutto per evitare conflitti
+    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "numpy", "opencv-python", "opencv-python-headless"], check=False)
+    
+    # Installiamo la versione 1.19.5 che è quella "nativa" per questi script AI
     libs = [
-        "numpy==1.23.5", "scikit-image==0.19.3", "imageio==2.9.0", 
-        "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", 
+        "numpy==1.19.5", 
+        "scikit-image==0.19.3",
+        "opencv-python-headless==4.8.0.74", 
+        "imageio==2.9.0", 
+        "imageio-ffmpeg", 
         "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
         "pyyaml", "gfpgan", "facexlib", "librosa", "resampy", 
         "basicsr", "pydub", "scipy==1.10.1"
@@ -17,13 +24,6 @@ def install_essentials():
 def handler(job):
     install_essentials()
     
-    # --- TRUCCO COMPATIBILITÀ NUMPY ---
-    # Questo risolve l'errore 'module numpy has no attribute float'
-    import numpy as np
-    if not hasattr(np, 'float'):
-        np.float = float
-    # ----------------------------------
-
     os.makedirs('checkpoints', exist_ok=True)
     models = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -46,7 +46,7 @@ def handler(job):
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (V73 - Rendering in corso...)...", flush=True)
+        print(">>> AVVIO RENDERING AI (V74 - Nessun errore Numpy possibile ora)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
@@ -69,7 +69,7 @@ def handler(job):
             
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Il rendering si è interrotto. Controlla i log."}
+        return {"error": "Rendering fallito. Controlla i log AI sopra."}
     except Exception as e:
         return {"error": str(e)}
 

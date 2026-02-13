@@ -1,25 +1,21 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: Inizio V74 (Numpy 1.19.5 - The Time Machine)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio V75 (Chirurgia del Codice)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Downgrade Forzato Numpy (Anti-AttributeError)...", flush=True)
-    # Rimuoviamo tutto per evitare conflitti
-    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "numpy", "opencv-python", "opencv-python-headless"], check=False)
-    
-    # Installiamo la versione 1.19.5 che è quella "nativa" per questi script AI
+    print(">>> 1. Installazione librerie moderne...", flush=True)
     libs = [
-        "numpy==1.19.5", 
-        "scikit-image==0.19.3",
-        "opencv-python-headless==4.8.0.74", 
-        "imageio==2.9.0", 
-        "imageio-ffmpeg", 
+        "numpy==1.23.5", "scikit-image==0.19.3", "imageio==2.9.0", 
+        "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", 
         "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
         "pyyaml", "gfpgan", "facexlib", "librosa", "resampy", 
         "basicsr", "pydub", "scipy==1.10.1"
     ]
-    for lib in libs:
-        subprocess.run([sys.executable, "-m", "pip", "install", lib], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
+
+    print(">>> 2. CHIRURGIA: Correzione automatica dei file SadTalker...", flush=True)
+    # Questo comando trova ogni 'np.float' e lo trasforma in 'float' nei file del motore
+    subprocess.run("find . -name '*.py' -exec sed -i 's/np.float/float/g' {} +", shell=True)
 
 def handler(job):
     install_essentials()
@@ -46,7 +42,7 @@ def handler(job):
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (V74 - Nessun errore Numpy possibile ora)...", flush=True)
+        print(">>> AVVIO RENDERING AI (V75 - Il momento della verità)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
@@ -69,7 +65,7 @@ def handler(job):
             
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Rendering fallito. Controlla i log AI sopra."}
+        return {"error": "Rendering fallito dopo la chirurgia. Controlla i log."}
     except Exception as e:
         return {"error": str(e)}
 

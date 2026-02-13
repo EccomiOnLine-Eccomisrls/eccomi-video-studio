@@ -1,30 +1,29 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: Inizio V72 (Force OpenCV 4.8 Fix)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio V73 (Numpy Compatibility Fix)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Pulizia Totale OpenCV...", flush=True)
-    # Rimuoviamo ogni possibile versione di OpenCV installata
-    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "opencv-python", "opencv-contrib-python", "opencv-python-headless"], check=False)
-    
-    print(">>> 2. Installazione Blindata (Versioni Certificate)...", flush=True)
+    print(">>> 1. Installazione librerie certificate...", flush=True)
     libs = [
-        "numpy==1.23.5", 
-        "scikit-image==0.19.3",
-        "opencv-python-headless==4.8.0.74", # <--- QUESTA DEVE VINCERE
-        "imageio==2.9.0", 
-        "imageio-ffmpeg", 
+        "numpy==1.23.5", "scikit-image==0.19.3", "imageio==2.9.0", 
+        "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", 
         "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
         "pyyaml", "gfpgan", "facexlib", "librosa", "resampy", 
         "basicsr", "pydub", "scipy==1.10.1"
     ]
-    # Installiamo uno per uno per essere sicuri che nessuno fallisca silenziosamente
     for lib in libs:
         subprocess.run([sys.executable, "-m", "pip", "install", lib], check=True)
 
 def handler(job):
     install_essentials()
     
+    # --- TRUCCO COMPATIBILITÀ NUMPY ---
+    # Questo risolve l'errore 'module numpy has no attribute float'
+    import numpy as np
+    if not hasattr(np, 'float'):
+        np.float = float
+    # ----------------------------------
+
     os.makedirs('checkpoints', exist_ok=True)
     models = [
         "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/auido2pose_00140-256.pth",
@@ -47,18 +46,14 @@ def handler(job):
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (V72 - Forza Bruta)...", flush=True)
-        # Usiamo PYTHONPATH=. per essere sicuri che veda i moduli locali
-        env = os.environ.copy()
-        env["PYTHONPATH"] = "."
-        
+        print(">>> AVVIO RENDERING AI (V73 - Rendering in corso...)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
             "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"
         ]
         
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print(f"AI LOG: {line.strip()}", flush=True)
         process.wait()
@@ -74,7 +69,7 @@ def handler(job):
             
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Il rendering si è fermato. Guarda i log sopra per l'errore di OpenCV."}
+        return {"error": "Il rendering si è interrotto. Controlla i log."}
     except Exception as e:
         return {"error": str(e)}
 

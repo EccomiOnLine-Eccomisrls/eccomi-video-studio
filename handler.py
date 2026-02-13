@@ -1,27 +1,33 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: V78.1 (Fresh Start)...", flush=True)
+print(">>> CONTAINER AVVIATO: V79 (Torch & Path Alignment)...", flush=True)
 
 def install_essentials():
-    # Pulizia preventiva per liberare memoria
-    subprocess.run("rm -rf /tmp/*", shell=True)
-    
-    print(">>> 1. Installazione in Path Isolato...", flush=True)
+    print(">>> 1. Pulizia e Installazione Ambiente Completo...", flush=True)
     target_dir = "/tmp/custom_libs"
     os.makedirs(target_dir, exist_ok=True)
     
+    # Abbiamo aggiunto torch e torchvision specifiche per evitare il ModuleNotFoundError
     libs = [
+        "torch==1.12.1+cu113", 
+        "torchvision==0.13.1+cu113",
         "numpy==1.23.5", "scikit-image==0.19.3", "imageio==2.9.0", 
         "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", 
         "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
         "pyyaml", "gfpgan", "facexlib", "librosa", "resampy", 
         "basicsr", "pydub", "scipy==1.10.1"
     ]
-    subprocess.run([sys.executable, "-m", "pip", "install", "-t", target_dir] + libs, check=True)
+    
+    # Usiamo un URL specifico per le versioni CUDA di Torch
+    subprocess.run([sys.executable, "-m", "pip", "install", "-t", target_dir, "--extra-index-url", "https://download.pytorch.org/whl/cu113"] + libs, check=True)
+
+    print(">>> 2. CHIRURGIA: Fix finali nel codice...", flush=True)
     subprocess.run(f"find . -name '*.py' -exec sed -i 's/np.float/float/g' {{}} +", shell=True)
 
 def handler(job):
     install_essentials()
+    
+    # Importante: impostiamo il PYTHONPATH prima di tutto il resto
     custom_env = os.environ.copy()
     custom_env["PYTHONPATH"] = f"/tmp/custom_libs:{os.getcwd()}"
     
@@ -43,13 +49,20 @@ def handler(job):
     try:
         if os.path.exists(tmp_res): shutil.rmtree(tmp_res)
         os.makedirs(tmp_res, exist_ok=True)
+        
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING...", flush=True)
-        cmd = [sys.executable, "inference.py", "--source_image", tmp_img, "--driven_audio", tmp_audio, "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"]
+        print(">>> AVVIO RENDERING AI (V79 - Full Compatibility)...", flush=True)
+        cmd = [
+            sys.executable, "inference.py",
+            "--source_image", tmp_img, "--driven_audio", tmp_audio,
+            "--result_dir", tmp_res, "--still", "--preprocess", "resize", "--enhancer", "gfpgan"
+        ]
+        
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=custom_env)
-        for line in process.stdout: print(f"AI LOG: {line.strip()}", flush=True)
+        for line in process.stdout:
+            print(f"AI LOG: {line.strip()}", flush=True)
         process.wait()
 
         mp4_files = glob.glob(f"{tmp_res}/**/*.mp4", recursive=True)
@@ -58,7 +71,9 @@ def handler(job):
             out_name = f"video_{uuid.uuid4().hex[:8]}.mp4"
             download_link = subprocess.check_output(f"curl -k --upload-file {video_path} https://transfer.sh/{out_name}", shell=True).decode().strip()
             return {"status": "success", "video_url": download_link}
-        return {"error": "Video non generato."}
-    except Exception as e: return {"error": str(e)}
+        
+        return {"error": "Il rendering è terminato senza produrre un file mp4."}
+    except Exception as e:
+        return {"error": str(e)}
 
 runpod.serverless.start({"handler": handler})

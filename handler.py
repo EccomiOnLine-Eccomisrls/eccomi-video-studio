@@ -1,15 +1,18 @@
 import os, subprocess, sys, runpod, uuid, glob, shutil
 
-print(">>> CONTAINER AVVIATO: V70.1 (Adding Pydub & Scipy)...", flush=True)
+print(">>> CONTAINER AVVIATO: Inizio V71 (OpenCV Fix & Final Render)...", flush=True)
 
 def install_essentials():
-    print(">>> 1. Installazione librerie certificate...", flush=True)
+    print(">>> 1. Forzatura versioni compatibili (Anti-OpenCV Error)...", flush=True)
+    # Rimuoviamo la 4.11 che causa il crash 'src is not a numpy array'
+    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "opencv-python", "opencv-python-headless"], check=False)
+    
     libs = [
         "numpy==1.23.5", "scikit-image==0.19.3", "imageio==2.9.0", 
-        "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", 
+        "imageio-ffmpeg", "opencv-python-headless==4.8.0.74", # <--- VERSIONE STABILE
         "edge-tts", "safetensors", "kornia==0.6.8", "tqdm", "yacs", 
         "pyyaml", "gfpgan", "facexlib", "librosa", "resampy", 
-        "basicsr", "pydub", "scipy==1.10.1" # <--- I PEZZI MANCANTI
+        "basicsr", "pydub", "scipy==1.10.1"
     ]
     subprocess.run([sys.executable, "-m", "pip", "install", "-U"] + libs, check=True)
 
@@ -38,7 +41,7 @@ def handler(job):
         subprocess.run(["curl", "-k", "-L", "-o", tmp_img, img_url], check=True)
         subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-GiuseppeNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING AI (V70.1)...", flush=True)
+        print(">>> AVVIO RENDERING AI (V71)...", flush=True)
         cmd = [
             sys.executable, "inference.py",
             "--source_image", tmp_img, "--driven_audio", tmp_audio,
@@ -61,7 +64,7 @@ def handler(job):
             
             return {"status": "success", "video_url": download_link}
         
-        return {"error": "Il rendering è terminato senza video. Controlla gli AI LOG."}
+        return {"error": "Rendering completato ma nessun video trovato."}
     except Exception as e:
         return {"error": str(e)}
 

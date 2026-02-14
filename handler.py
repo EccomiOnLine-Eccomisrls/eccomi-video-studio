@@ -9,10 +9,19 @@ def install_essentials():
     subprocess.run("find . -name '*.py' -exec sed -i 's/from torchvision.transforms.functional_tensor import/import torchvision.transforms.functional as/g' {} +", shell=True)
 
 def upload_video(path):
+    # Prova 1: Catbox (con timeout aumentato)
     try:
-        cmd = f"curl -F 'reqtype=fileupload' -F 'fileToUpload=@{path}' https://catbox.moe/user/api.php"
-        return subprocess.check_output(cmd, shell=True).decode().strip()
-    except: return None
+        print(">>> Tentativo Catbox...", flush=True)
+        return subprocess.check_output(f"curl -F 'reqtype=fileupload' -F 'fileToUpload=@{path}' https://catbox.moe/user/api.php", shell=True).decode().strip()
+    except:
+        # Prova 2: GoFile (Ottimo per file pesanti HD)
+        try:
+            print(">>> Tentativo GoFile...", flush=True)
+            srv = subprocess.check_output("curl -s https://api.gofile.io/getServer", shell=True).decode()
+            server = srv.split('"server":"')[1].split('"')[0]
+            out = subprocess.check_output(f"curl -F 'file=@{path}' https://{server}.gofile.io/uploadFile", shell=True).decode()
+            return out.split('"downloadPage":"')[1].split('"')[0]
+        except: return None
 
 def handler(job):
     install_essentials()
@@ -23,28 +32,16 @@ def handler(job):
     try:
         os.makedirs(tmp_res, exist_ok=True)
         subprocess.run(["curl", "-L", "-o", tmp_img, img_url], check=True)
-        subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-ElsaNeural", "--write-media", tmp_audio], check=True) # Ho messo Elsa per un tono più naturale
+        subprocess.run(["edge-tts", "--text", text, "--voice", "it-IT-ElsaNeural", "--write-media", tmp_audio], check=True)
         
-        print(">>> AVVIO RENDERING HD (V94)...", flush=True)
-        # Comando potenziato: HD, Posa naturale e scala espressioni aumentata
-        cmd = [
-            sys.executable, "inference.py", 
-            "--source_image", tmp_img, 
-            "--driven_audio", tmp_audio, 
-            "--result_dir", tmp_res, 
-            "--still", 
-            "--preprocess", "full", 
-            "--enhancer", "gfpgan", 
-            "--size", "512", 
-            "--pose_style", "15",
-            "--expression_scale", "1.2"
-        ]
+        # Rendering HD mantenuto
+        cmd = [sys.executable, "inference.py", "--source_image", tmp_img, "--driven_audio", tmp_audio, "--result_dir", tmp_res, "--still", "--preprocess", "full", "--enhancer", "gfpgan", "--size", "512", "--pose_style", "15"]
         subprocess.run(cmd, env=env, check=True)
         
         video_path = max(glob.glob(f"{tmp_res}/**/*.mp4", recursive=True), key=os.path.getctime)
         link = upload_video(video_path)
         if link:
-            print(f"\n********************************\nNUOVO LINK HD: {link}\n********************************\n", flush=True)
+            print(f"\n********************************\nLINK VIDEO HD: {link}\n********************************\n", flush=True)
             return {"video_url": link}
         return {"error": "Upload fallito"}
     except Exception as e: return {"error": str(e)}

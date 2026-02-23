@@ -4,5 +4,5 @@ edge-tts
 opencv-python-headless
 deepface
 tf-keras
-tensorflow-cpu
+scipy
 safetensors

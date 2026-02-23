@@ -15,6 +15,8 @@ RUN bash scripts/download_models.sh
 COPY requirements.txt .
 RUN pip install --no-cache-dir --ignore-installed -r requirements.txt
 
+RUN pip install --no-cache-dir transformers==4.33.0
+
 COPY handler.py .
 RUN mkdir -p results
 

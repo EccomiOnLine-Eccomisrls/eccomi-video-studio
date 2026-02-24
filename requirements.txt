@@ -1,8 +1,5 @@
 runpod
+requests
 boto3
 edge-tts
 opencv-python-headless
-deepface
-tf-keras
-scipy
-safetensors

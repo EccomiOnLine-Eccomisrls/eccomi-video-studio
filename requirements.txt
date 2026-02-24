@@ -4,3 +4,4 @@ boto3
 edge-tts
 opencv-python-headless
 scikit-image==0.21.0
+kornia==0.7.0

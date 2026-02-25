@@ -21,3 +21,6 @@ realesrgan==0.3.0
 librosa==0.10.1
 soundfile
 numba
+imageio==2.34.0
+imageio-ffmpeg==0.4.9
+tifffile==2023.7.10

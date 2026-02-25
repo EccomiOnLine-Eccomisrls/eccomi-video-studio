@@ -5,6 +5,8 @@ import runpod
 import uuid
 import glob
 import requests
+import mimetypes
+from pathlib import Path
 
 # --- CONFIG SUPABASE ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -16,12 +18,16 @@ def upload_to_supabase(local_path, token):
         print("❌ ENV Supabase mancanti!")
         return None
 
-    object_path = f"evs/{token}.mp4"
+    p = Path(local_path)
+    ext = p.suffix.lower()  # .mp4 / .gif / .mov
+    object_path = f"evs/{token}{ext}"
+
     upload_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_path}"
 
+    content_type = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
+
     try:
-        with open(local_path, "rb") as f:
-            file_data = f.read()
+        file_data = p.read_bytes()
 
         if len(file_data) < 5000:
             print("❌ File troppo piccolo")
@@ -29,20 +35,20 @@ def upload_to_supabase(local_path, token):
 
         headers = {
             "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "video/mp4",
+            "Content-Type": content_type,
             "x-upsert": "true"
         }
 
-        print(f"🚀 Upload Supabase: {object_path}")
+        print(f"🚀 Upload Supabase: {object_path} ({content_type})")
         r = requests.post(upload_url, headers=headers, data=file_data, timeout=300)
 
         if r.status_code in [200, 201]:
             public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{object_path}"
             print("✅ Upload OK:", public_url)
             return public_url
-        else:
-            print("❌ Errore Supabase:", r.text)
-            return None
+
+        print("❌ Errore Supabase:", r.status_code, r.text)
+        return None
 
     except Exception as e:
         print("❌ Eccezione upload:", e)

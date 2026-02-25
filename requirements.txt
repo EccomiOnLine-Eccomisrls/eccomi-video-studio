@@ -11,3 +11,4 @@ yacs
 einops
 tqdm
 scipy
+pydub

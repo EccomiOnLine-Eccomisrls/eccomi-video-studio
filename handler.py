@@ -22,8 +22,7 @@ def upload_to_supabase(local_path, token):
     ext = p.suffix.lower()  # .mp4 / .gif / .mov
     object_path = f"evs/{token}{ext}"
 
-    upload_url = f"{SUPABASE_URL}/storage/v1/object/upload/{SUPABASE_BUCKET}/{object_path}"
-
+    upload_url = f"{SUPABASE_URL}/storage/v1/object/upload/{SUPABASE_BUCKET}/{object_path}?upsert=true"
     content_type = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
 
     try:
@@ -38,7 +37,7 @@ def upload_to_supabase(local_path, token):
             "apikey": SUPABASE_KEY,
             "Content-Type": content_type,
             "x-upsert": "true"
-       }
+        }
 
         print(f"🚀 Upload Supabase: {object_path} ({content_type})")
         r = requests.post(upload_url, headers=headers, data=file_data, timeout=300)

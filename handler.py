@@ -88,15 +88,27 @@ def handler(job):
 
         # Audio
         if audio_url:
-            subprocess.run(["curl", "-L", "-o", tmp_audio, audio_url], check=True)
+           subprocess.run(["curl", "-L", "-o", tmp_audio, audio_url], check=True)
         else:
-            voice = "it-IT-GiuseppeNeural" if gender == "male" else "it-IT-ElsaNeural"
-            subprocess.run([
-                "edge-tts",
-                "--text", text,
-                "--voice", voice,
-                "--write-media", tmp_audio
-            ], check=True)
+           if not text:
+              return {"error": "Testo mancante per generazione TTS"}
+
+           if not gender:
+              return {"error": "Gender mancante per generazione TTS"}
+
+           if gender == "male":
+              voice = "it-IT-GiuseppeNeural"
+           elif gender == "female":
+              voice = "it-IT-ElsaNeural"
+           else:
+              return {"error": "Gender non valido"}
+
+           subprocess.run([
+              "edge-tts",
+              "--text", text,
+              "--voice", voice,
+              "--write-media", tmp_audio
+           ], check=True)
 
         # Inference SadTalker
         subprocess.run([

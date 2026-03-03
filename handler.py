@@ -71,7 +71,7 @@ def handler(job):
     image_url = i.get("image_url")
     text = i.get("text") or ""
     audio_url = i.get("audio_url")
-    gender = i.get("gender", "male")
+    gender = i.get("gender")  # nessun default
 
     if not image_url:
         return {"error": "image_url mancante"}

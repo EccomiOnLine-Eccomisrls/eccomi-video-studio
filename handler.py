@@ -8,47 +8,35 @@ import requests
 import mimetypes
 from pathlib import Path
 
-# --- CONFIG SUPABASE ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-# usa Service Role (consigliato per upload server-side)
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_BUCKET = os.getenv("SUPABASE_VIDEOS_BUCKET", "videos")
 
-def upload_to_supabase(local_path: str, token: str):
-    """
-    Upload su Supabase Storage via REST API.
-    Endpoint corretto: /storage/v1/object/{bucket}/{path}?upsert=true
-    """
+def upload_to_supabase(local_path: str, token: str, object_name: str):
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("❌ ENV Supabase mancanti (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)")
         return None
 
     p = Path(local_path)
-    ext = p.suffix.lower() or ".mp4"
-    object_path = f"evs/{token}{ext}"
-
-    # ✅ ENDPOINT CORRETTO (NOTA: niente /upload/)
-    upload_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_path}?upsert=true"
-
     content_type = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
+
+    object_path = object_name  # es: "{token}.mp4"
+    upload_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_path}?upsert=true"
 
     try:
         file_data = p.read_bytes()
         print(f"📦 File size: {len(file_data)} bytes")
-
         if len(file_data) < 5000:
             print("❌ File troppo piccolo, blocco upload")
             return None
 
         headers = {
-            # Supabase accetta sia Authorization Bearer sia apikey
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "apikey": SUPABASE_KEY,
             "Content-Type": content_type,
         }
 
         print(f"🚀 Upload Supabase -> bucket={SUPABASE_BUCKET} path={object_path} ({content_type})")
-        # Supabase supporta PUT per upload oggetti
         r = requests.put(upload_url, headers=headers, data=file_data, timeout=300)
 
         if r.status_code in (200, 201):
@@ -63,15 +51,25 @@ def upload_to_supabase(local_path: str, token: str):
         print("❌ Eccezione upload:", repr(e))
         return None
 
+def normalize_plan(plan: str) -> str:
+    p = (plan or "").strip().lower()
+    if p in ["base", "basic"]:
+        return "base"
+    if p in ["pro"]:
+        return "pro"
+    if p in ["ultra", "premium"]:
+        return "ultra"
+    return "base"
 
 def handler(job):
-    i = job.get("input", {})
+    i = job.get("input", {}) or {}
 
     token = i.get("token") or str(uuid.uuid4())
     image_url = i.get("image_url")
     text = i.get("text") or ""
     audio_url = i.get("audio_url")
-    gender = i.get("gender")  # nessun default
+    gender = i.get("gender")
+    plan = normalize_plan(i.get("plan", "base"))
 
     if not image_url:
         return {"error": "image_url mancante"}
@@ -88,30 +86,29 @@ def handler(job):
 
         # Audio
         if audio_url:
-           subprocess.run(["curl", "-L", "-o", tmp_audio, audio_url], check=True)
+            subprocess.run(["curl", "-L", "-o", tmp_audio, audio_url], check=True)
         else:
-           if not text:
-              return {"error": "Testo mancante per generazione TTS"}
+            if not text:
+                return {"error": "Testo mancante per generazione TTS"}
+            if not gender:
+                return {"error": "Gender mancante per generazione TTS"}
 
-           if not gender:
-              return {"error": "Gender mancante per generazione TTS"}
+            if gender == "male":
+                voice = "it-IT-GiuseppeNeural"
+            elif gender == "female":
+                voice = "it-IT-ElsaNeural"
+            else:
+                return {"error": "Gender non valido"}
 
-           if gender == "male":
-              voice = "it-IT-GiuseppeNeural"
-           elif gender == "female":
-              voice = "it-IT-ElsaNeural"
-           else:
-              return {"error": "Gender non valido"}
+            subprocess.run([
+                "edge-tts",
+                "--text", text,
+                "--voice", voice,
+                "--write-media", tmp_audio
+            ], check=True)
 
-           subprocess.run([
-              "edge-tts",
-              "--text", text,
-              "--voice", voice,
-              "--write-media", tmp_audio
-           ], check=True)
-
-        # Inference SadTalker
-        subprocess.run([
+        # ---- SadTalker args (enhancer solo ULTRA) ----
+        cmd = [
             sys.executable,
             "inference.py",
             "--source_image", tmp_image,
@@ -119,9 +116,14 @@ def handler(job):
             "--result_dir", tmp_result,
             "--still",
             "--preprocess", "full",
-            "--enhancer", "gfpgan",
             "--size", "512"
-        ], check=True)
+        ]
+
+        if plan == "ultra":
+            cmd += ["--enhancer", "gfpgan"]   # SOLO ULTRA
+        # base/pro: niente enhancer
+
+        subprocess.run(cmd, check=True)
 
         # Trova MP4 generato
         files = glob.glob(f"{tmp_result}/**/*.mp4", recursive=True)
@@ -131,22 +133,21 @@ def handler(job):
         video_path = max(files, key=os.path.getctime)
         print("🎬 Video generato:", video_path)
 
-        # Upload Supabase
-        final_url = upload_to_supabase(video_path, token)
+        # Upload su Supabase (ROOT: token.mp4)
+        object_name = f"{token}.mp4"
+        final_url = upload_to_supabase(video_path, token, object_name)
         if not final_url:
             return {"error": "Upload Supabase fallito"}
 
-        # ✅ output chiaro per Render (poll_runpod)
         return {
-            "status": "completed",
             "video_url": final_url,
-            "token": token
+            "token": token,
+            "plan": plan
         }
 
     except subprocess.CalledProcessError as e:
         return {"error": f"Subprocess error: {e}"}
     except Exception as e:
         return {"error": str(e)}
-
 
 runpod.serverless.start({"handler": handler})

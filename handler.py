@@ -138,7 +138,7 @@ def handler(job):
             ], check=True)
 
         # ==========================
-        # SadTalker
+        # SadTalker potenziato
         # ==========================
 
         cmd = [
@@ -151,7 +151,9 @@ def handler(job):
             "--preprocess", "full",
             "--size", "512",
             "--expression_scale", "1.3",
-            "--batch_size", "2"
+            "--batch_size", "2",
+            "--pose_style", "0",
+            "--face3dvis"
         ]
 
         # enhancer solo ULTRA
@@ -207,4 +209,11 @@ def handler(job):
         return {"error": str(e)}
 
 
-runpod.serverless.start({"handler": handler})
+# ==========================
+# RunPod Serverless
+# ==========================
+
+runpod.serverless.start({
+    "handler": handler,
+    "max_concurrency": 3
+})

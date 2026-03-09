@@ -109,32 +109,32 @@ def handler(job):
             image_url
         ], check=True)
 
-        # ==========================
+                # ==========================
         # AUDIO
         # ==========================
 
         if audio_url and str(audio_url).strip():
 
-    subprocess.run([
-        "curl",
-        "-L",
-        "--fail",
-        "--max-time", "120",
-        "-o", tmp_audio,
-        audio_url
-    ], check=True)
+            subprocess.run([
+                "curl",
+                "-L",
+                "--fail",
+                "--max-time", "120",
+                "-o", tmp_audio,
+                audio_url
+            ], check=True)
 
-else:
+        else:
 
-    if not text:
-        return {"error": "Testo mancante per generazione TTS"}
+            if not text:
+                return {"error": "Testo mancante per generazione TTS"}
 
-    subprocess.run([
-        "edge-tts",
-        "--text", text,
-        "--voice", voice,
-        "--write-media", tmp_audio
-    ], check=True)
+            subprocess.run([
+                "edge-tts",
+                "--text", text,
+                "--voice", voice,
+                "--write-media", tmp_audio
+            ], check=True)
 
         # ==========================
         # SadTalker potenziato

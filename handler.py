@@ -84,6 +84,9 @@ def handler(job):
     else:
         voice = "it-IT-ElsaNeural"
 
+    print("GENDER:", gender)
+    print("VOICE:", voice)
+
     plan = normalize_plan(i.get("plan", "base"))
 
     if not image_url:

@@ -69,11 +69,22 @@ def handler(job):
     i = job.get("input", {}) or {}
 
     token = i.get("token") or str(uuid.uuid4())
-    image_url = i.get("image_url")
-    text = i.get("text") or ""
-    audio_url = i.get("audio_url")
-    gender = i.get("gender")
-    plan = normalize_plan(i.get("plan", "base"))
+image_url = i.get("image_url")
+text = i.get("text") or ""
+audio_url = i.get("audio_url")
+
+gender = (i.get("gender") or "").lower()
+
+if gender in ["female", "f", "donna", "femmina"]:
+    voice = "it-IT-ElsaNeural"
+
+elif gender in ["male", "m", "uomo"]:
+    voice = "it-IT-GiuseppeNeural"
+
+else:
+    voice = "it-IT-ElsaNeural"
+
+plan = normalize_plan(i.get("plan", "base"))
 
     if not image_url:
         return {"error": "image_url mancante"}

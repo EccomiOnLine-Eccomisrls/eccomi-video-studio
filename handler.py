@@ -113,7 +113,7 @@ plan = normalize_plan(i.get("plan", "base"))
         # AUDIO
         # ==========================
 
-        if audio_url:
+        if audio_url and str(audio_url).strip():
 
             subprocess.run([
                 "curl",

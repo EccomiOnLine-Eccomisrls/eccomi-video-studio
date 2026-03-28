@@ -65,6 +65,23 @@ def normalize_plan(plan: str) -> str:
     return "base"
 
 
+def create_reel_ffmpeg(input_mp4: str, output_mp4: str):
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", input_mp4,
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        output_mp4
+    ]
+    subprocess.run(cmd, check=True)
+
+
 def handler(job):
     i = job.get("input", {}) or {}
 
@@ -77,10 +94,8 @@ def handler(job):
 
     if gender in ["female", "f", "donna", "femmina"]:
         voice = "it-IT-ElsaNeural"
-
     elif gender in ["male", "m", "uomo"]:
         voice = "it-IT-GiuseppeNeural"
-
     else:
         voice = "it-IT-ElsaNeural"
 
@@ -99,10 +114,6 @@ def handler(job):
     try:
         os.makedirs(tmp_result, exist_ok=True)
 
-        # ==========================
-        # Download immagine sicuro
-        # ==========================
-
         subprocess.run([
             "curl",
             "-L",
@@ -112,12 +123,7 @@ def handler(job):
             image_url
         ], check=True)
 
-                # ==========================
-        # AUDIO
-        # ==========================
-
         if audio_url and str(audio_url).strip():
-
             subprocess.run([
                 "curl",
                 "-L",
@@ -126,9 +132,7 @@ def handler(job):
                 "-o", tmp_audio,
                 audio_url
             ], check=True)
-
         else:
-
             if not text:
                 return {"error": "Testo mancante per generazione TTS"}
 
@@ -138,10 +142,6 @@ def handler(job):
                 "--voice", voice,
                 "--write-media", tmp_audio
             ], check=True)
-
-        # ==========================
-        # SadTalker potenziato
-        # ==========================
 
         cmd = [
             sys.executable,
@@ -157,15 +157,10 @@ def handler(job):
             "--pose_style", "0",
         ]
 
-        # enhancer solo ULTRA
         if plan == "ultra":
             cmd += ["--enhancer", "gfpgan"]
 
         subprocess.run(cmd, check=True)
-
-        # ==========================
-        # Trova video generato
-        # ==========================
 
         files = glob.glob(f"{tmp_result}/**/*.mp4", recursive=True)
 
@@ -176,29 +171,40 @@ def handler(job):
 
         print("🎬 Video generato:", video_path)
 
-        # ==========================
-        # Verifica dimensione video
-        # ==========================
-
         size = os.path.getsize(video_path)
         print("📏 Video size:", size)
 
         if size < 100000:
             return {"error": "Video generato troppo piccolo"}
 
-        # ==========================
-        # Upload Supabase
-        # ==========================
-
         object_name = f"{token}.mp4"
-
         final_url = upload_to_supabase(video_path, token, object_name)
 
         if not final_url:
             return {"error": "Upload Supabase fallito"}
 
+        reel_url = None
+
+        try:
+            reel_path = f"/tmp/{token}_reel.mp4"
+            create_reel_ffmpeg(video_path, reel_path)
+
+            if os.path.exists(reel_path) and os.path.getsize(reel_path) > 5000:
+                reel_url = upload_to_supabase(
+                    reel_path,
+                    token,
+                    f"{token}_reel.mp4"
+                )
+                print("✅ Reel upload OK:", reel_url)
+            else:
+                print("⚠️ Reel non creato o troppo piccolo")
+
+        except Exception as reel_err:
+            print("❌ Reel creation error:", repr(reel_err))
+
         return {
             "video_url": final_url,
+            "reel_url": reel_url,
             "token": token,
             "plan": plan
         }
@@ -209,10 +215,6 @@ def handler(job):
     except Exception as e:
         return {"error": str(e)}
 
-
-# ==========================
-# RunPod Serverless
-# ==========================
 
 runpod.serverless.start({
     "handler": handler,

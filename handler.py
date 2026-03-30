@@ -10,7 +10,7 @@ from pathlib import Path
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-SUPABASE_BUCKET = os.getenv("SUPABASE_VIDEOS_BUCKET", "videos")
+SUPABASE_BUCKET = os.getenv("SUPABASE_VIDEOS_BUCKET", "preview-videos")
 
 
 def upload_to_supabase(local_path: str, token: str, object_name: str):
@@ -20,7 +20,6 @@ def upload_to_supabase(local_path: str, token: str, object_name: str):
 
     p = Path(local_path)
     content_type = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
-
     object_path = object_name
     upload_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_path}?upsert=true"
 
@@ -63,23 +62,6 @@ def normalize_plan(plan: str) -> str:
     if p in ["ultra", "premium"]:
         return "ultra"
     return "base"
-
-
-def create_reel_ffmpeg(input_mp4: str, output_mp4: str):
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i", input_mp4,
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        output_mp4
-    ]
-    subprocess.run(cmd, check=True)
 
 
 def handler(job):
@@ -151,9 +133,9 @@ def handler(job):
             "--result_dir", tmp_result,
             "--still",
             "--preprocess", "full",
-            "--size", "512",
-            "--expression_scale", "1.3",
-            "--batch_size", "2",
+            "--size", "256",
+            "--expression_scale", "1.2",
+            "--batch_size", "1",
             "--pose_style", "0",
         ]
 
@@ -183,28 +165,8 @@ def handler(job):
         if not final_url:
             return {"error": "Upload Supabase fallito"}
 
-        reel_url = None
-
-        try:
-            reel_path = f"/tmp/{token}_reel.mp4"
-            create_reel_ffmpeg(video_path, reel_path)
-
-            if os.path.exists(reel_path) and os.path.getsize(reel_path) > 5000:
-                reel_url = upload_to_supabase(
-                    reel_path,
-                    token,
-                    f"{token}_reel.mp4"
-                )
-                print("✅ Reel upload OK:", reel_url)
-            else:
-                print("⚠️ Reel non creato o troppo piccolo")
-
-        except Exception as reel_err:
-            print("❌ Reel creation error:", repr(reel_err))
-
         return {
             "video_url": final_url,
-            "reel_url": reel_url,
             "token": token,
             "plan": plan
         }

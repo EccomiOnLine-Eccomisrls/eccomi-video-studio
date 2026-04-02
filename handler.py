@@ -6,11 +6,15 @@ import uuid
 import glob
 import requests
 import mimetypes
+import time
 from pathlib import Path
+from datetime import datetime, timezone
+from urllib.parse import quote
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_BUCKET = os.getenv("SUPABASE_VIDEOS_BUCKET", "videos")
+SUPABASE_TABLE = os.getenv("SUPABASE_VIDEO_JOBS_TABLE", "video_jobs")
 
 
 def upload_to_supabase(local_path: str, token: str, object_name: str):
@@ -54,6 +58,63 @@ def upload_to_supabase(local_path: str, token: str, object_name: str):
         return None
 
 
+def patch_video_job(token: str, payload: dict):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("⚠️ ENV Supabase mancanti: skip patch video_jobs")
+        return False
+
+    if not token:
+        print("⚠️ token mancante: skip patch video_jobs")
+        return False
+
+    patch_url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}?evs_token=eq.{quote(str(token), safe='')}"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "apikey": SUPABASE_KEY,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    r = requests.patch(patch_url, headers=headers, json=payload, timeout=60)
+    print("📬 PATCH video_jobs:", r.status_code, r.text[:500])
+    r.raise_for_status()
+    return True
+
+
+def mark_video_job_done(token: str, final_url: str, reel_url: str = None, processing_seconds: int = None):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    chosen_url = reel_url or final_url
+
+    payload = {
+        "status": "done",
+        "video_url": chosen_url,
+        "video_supabase_url": chosen_url,
+        "video_reel_url": reel_url or chosen_url,
+        "video_url_source": "supabase",
+        "finished_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    if processing_seconds is not None:
+        payload["processing_seconds"] = int(processing_seconds)
+
+    return patch_video_job(token, payload)
+
+
+def mark_video_job_failed(token: str, error_message: str):
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    payload = {
+        "status": "failed",
+        "finished_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    ok = patch_video_job(token, payload)
+    print("❌ video_jobs segnato failed:", ok, "| error:", error_message)
+    return ok
+
+
 def normalize_plan(plan: str) -> str:
     p = (plan or "").strip().lower()
     if p in ["base", "basic"]:
@@ -83,9 +144,10 @@ def create_reel_ffmpeg(input_mp4: str, output_mp4: str):
 
 
 def handler(job):
+    start_ts = time.time()
     i = job.get("input", {}) or {}
 
-    token = i.get("token") or str(uuid.uuid4())
+    token = i.get("token") or i.get("evs_token") or str(uuid.uuid4())
     image_url = i.get("image_url")
     text = i.get("text") or ""
     audio_url = i.get("audio_url")
@@ -99,17 +161,26 @@ def handler(job):
     else:
         voice = "it-IT-ElsaNeural"
 
+    print("TOKEN:", token)
     print("GENDER:", gender)
     print("VOICE:", voice)
 
     plan = normalize_plan(i.get("plan", "base"))
 
-    if not image_url:
-        return {"error": "image_url mancante"}
-
     tmp_image = "/tmp/source.jpg"
     tmp_audio = "/tmp/audio.wav"
     tmp_result = "/tmp/results"
+
+    def fail_job(message: str):
+        print("❌", message)
+        try:
+            mark_video_job_failed(token, message)
+        except Exception as db_err:
+            print("❌ PATCH failed error:", repr(db_err))
+        return {"error": message, "token": token}
+
+    if not image_url:
+        return fail_job("image_url mancante")
 
     try:
         os.makedirs(tmp_result, exist_ok=True)
@@ -134,7 +205,7 @@ def handler(job):
             ], check=True)
         else:
             if not text:
-                return {"error": "Testo mancante per generazione TTS"}
+                return fail_job("Testo mancante per generazione TTS")
 
             subprocess.run([
                 "edge-tts",
@@ -165,7 +236,7 @@ def handler(job):
         files = glob.glob(f"{tmp_result}/**/*.mp4", recursive=True)
 
         if not files:
-            return {"error": "Nessun video generato (.mp4 non trovato)"}
+            return fail_job("Nessun video generato (.mp4 non trovato)")
 
         video_path = max(files, key=os.path.getctime)
 
@@ -175,13 +246,13 @@ def handler(job):
         print("📏 Video size:", size)
 
         if size < 100000:
-            return {"error": "Video generato troppo piccolo"}
+            return fail_job("Video generato troppo piccolo")
 
         object_name = f"{token}.mp4"
         final_url = upload_to_supabase(video_path, token, object_name)
 
         if not final_url:
-            return {"error": "Upload Supabase fallito"}
+            return fail_job("Upload Supabase fallito")
 
         reel_url = None
 
@@ -202,18 +273,32 @@ def handler(job):
         except Exception as reel_err:
             print("❌ Reel creation error:", repr(reel_err))
 
+        processing_seconds = int(time.time() - start_ts)
+
+        try:
+            db_updated = mark_video_job_done(
+                token=token,
+                final_url=final_url,
+                reel_url=reel_url,
+                processing_seconds=processing_seconds
+            )
+            print("✅ video_jobs aggiornato:", db_updated)
+        except Exception as db_err:
+            print("❌ Update DB done fallito:", repr(db_err))
+
         return {
             "video_url": final_url,
             "reel_url": reel_url,
             "token": token,
-            "plan": plan
+            "plan": plan,
+            "processing_seconds": processing_seconds
         }
 
     except subprocess.CalledProcessError as e:
-        return {"error": f"Subprocess error: {e}"}
+        return fail_job(f"Subprocess error: {e}")
 
     except Exception as e:
-        return {"error": str(e)}
+        return fail_job(str(e))
 
 
 runpod.serverless.start({

@@ -228,8 +228,8 @@ def handler(job):
             "--pose_style", "0",
         ]
 
-        if plan == "ultra":
-            cmd += ["--enhancer", "gfpgan"]
+        if plan in ["pro", "ultra"]:
+    cmd += ["--enhancer", "gfpgan"]
 
         subprocess.run(cmd, check=True)
 

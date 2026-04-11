@@ -143,6 +143,23 @@ def create_reel_ffmpeg(input_mp4: str, output_mp4: str):
     subprocess.run(cmd, check=True)
 
 
+def polish_video_ffmpeg(input_mp4: str, output_mp4: str):
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", input_mp4,
+        "-vf", "unsharp=5:5:0.4:5:5:0.0,eq=contrast=1.03:brightness=0.01:saturation=1.03",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        output_mp4
+    ]
+    subprocess.run(cmd, check=True)
+
+
 def handler(job):
     start_ts = time.time()
     i = job.get("input", {}) or {}
@@ -228,9 +245,6 @@ def handler(job):
             "--pose_style", "0",
         ]
 
-        if plan in ["pro", "ultra"]:
-    cmd += ["--enhancer", "gfpgan"]
-
         subprocess.run(cmd, check=True)
 
         files = glob.glob(f"{tmp_result}/**/*.mp4", recursive=True)
@@ -240,16 +254,40 @@ def handler(job):
 
         video_path = max(files, key=os.path.getctime)
 
-        print("🎬 Video generato:", video_path)
+        print("🎬 Video base generato:", video_path)
 
-        size = os.path.getsize(video_path)
-        print("📏 Video size:", size)
+        final_video_path = video_path
+
+        if plan in ["pro", "ultra"]:
+            polished_path = f"/tmp/{token}_polished.mp4"
+
+            try:
+                print(f"✨ Avvio polish FFmpeg per piano: {plan}")
+                polish_video_ffmpeg(video_path, polished_path)
+
+                if not os.path.exists(polished_path):
+                    return fail_job("Polish video non creato")
+
+                polished_size = os.path.getsize(polished_path)
+                print("📏 Polished video size:", polished_size)
+
+                if polished_size < 100000:
+                    return fail_job("Polish video troppo piccolo")
+
+                final_video_path = polished_path
+                print("✅ Polish FFmpeg completato:", final_video_path)
+
+            except Exception as polish_err:
+                return fail_job(f"Polish FFmpeg error: {polish_err}")
+
+        size = os.path.getsize(final_video_path)
+        print("📏 Video finale size:", size)
 
         if size < 100000:
-            return fail_job("Video generato troppo piccolo")
+            return fail_job("Video finale troppo piccolo")
 
         object_name = f"{token}.mp4"
-        final_url = upload_to_supabase(video_path, token, object_name)
+        final_url = upload_to_supabase(final_video_path, token, object_name)
 
         if not final_url:
             return fail_job("Upload Supabase fallito")
@@ -258,7 +296,7 @@ def handler(job):
 
         try:
             reel_path = f"/tmp/{token}_reel.mp4"
-            create_reel_ffmpeg(video_path, reel_path)
+            create_reel_ffmpeg(final_video_path, reel_path)
 
             if os.path.exists(reel_path) and os.path.getsize(reel_path) > 5000:
                 reel_url = upload_to_supabase(

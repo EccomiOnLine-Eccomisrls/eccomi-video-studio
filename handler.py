@@ -126,6 +126,30 @@ def normalize_plan(plan: str) -> str:
         return "ultra"
     return "base"
 
+def pick_tts_profile(voice_profile: str, gender: str):
+    vp = (voice_profile or "").strip().lower()
+
+    profiles = {
+        "man_standard":   {"voice": "it-IT-GiuseppeNeural", "rate": "+0%",  "pitch": "+0Hz"},
+        "man_happy":      {"voice": "it-IT-GiuseppeNeural", "rate": "+10%", "pitch": "+2Hz"},
+        "man_serious":    {"voice": "it-IT-GiuseppeNeural", "rate": "-10%", "pitch": "-2Hz"},
+
+        "woman_standard": {"voice": "it-IT-ElsaNeural",     "rate": "+0%",  "pitch": "+0Hz"},
+        "woman_happy":    {"voice": "it-IT-ElsaNeural",     "rate": "+10%", "pitch": "+2Hz"},
+        "woman_serious":  {"voice": "it-IT-ElsaNeural",     "rate": "-10%", "pitch": "-2Hz"},
+
+        "boy":            {"voice": "it-IT-GiuseppeNeural", "rate": "+18%", "pitch": "+6Hz"},
+        "girl":           {"voice": "it-IT-ElsaNeural",     "rate": "+18%", "pitch": "+6Hz"},
+    }
+
+    if vp in profiles:
+        return profiles[vp]
+
+    if (gender or "").lower() in ["female", "f", "donna", "femmina"]:
+        return {"voice": "it-IT-ElsaNeural", "rate": "+0%", "pitch": "+0Hz"}
+
+    return {"voice": "it-IT-GiuseppeNeural", "rate": "+0%", "pitch": "+0Hz"}
+
 
 def create_reel_ffmpeg(input_mp4: str, output_mp4: str):
     cmd = [
@@ -170,18 +194,20 @@ def handler(job):
     text = i.get("text") or ""
     audio_url = i.get("audio_url")
 
+    voice_profile = i.get("voice_profile") or ""
     gender = (i.get("gender") or "").lower()
 
-    if gender in ["female", "f", "donna", "femmina"]:
-        voice = "it-IT-ElsaNeural"
-    elif gender in ["male", "m", "uomo"]:
-        voice = "it-IT-GiuseppeNeural"
-    else:
-        voice = "it-IT-ElsaNeural"
+    tts_profile = pick_tts_profile(voice_profile, gender)
+    voice = tts_profile["voice"]
+    rate = tts_profile["rate"]
+    pitch = tts_profile["pitch"]
 
     print("TOKEN:", token)
     print("GENDER:", gender)
+    print("VOICE_PROFILE:", voice_profile)
     print("VOICE:", voice)
+    print("RATE:", rate)
+    print("PITCH:", pitch)
 
     plan = normalize_plan(i.get("plan", "base"))
 
@@ -226,11 +252,13 @@ def handler(job):
                 return fail_job("Testo mancante per generazione TTS")
 
             subprocess.run([
-                "edge-tts",
-                "--text", text,
-                "--voice", voice,
-                "--write-media", tmp_audio
-            ], check=True)
+    "edge-tts",
+    "--text", text,
+    "--voice", voice,
+    "--rate", rate,
+    "--pitch", pitch,
+    "--write-media", tmp_audio
+], check=True)
 
         cmd = [
             sys.executable,

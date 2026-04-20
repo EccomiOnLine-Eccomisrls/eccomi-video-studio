@@ -83,13 +83,14 @@ def patch_video_job(token: str, payload: dict):
 
 def mark_video_job_done(token: str, final_url: str, reel_url: str = None, processing_seconds: int = None):
     now_iso = datetime.now(timezone.utc).isoformat()
-    chosen_url = reel_url or final_url
+
+    public_watch_url = f"https://video.eccomionline.com/video/{token}"
 
     payload = {
         "status": "done",
-        "video_url": chosen_url,
-        "video_supabase_url": chosen_url,
-        "video_reel_url": reel_url or chosen_url,
+        "video_url": public_watch_url,
+        "video_supabase_url": final_url,
+        "video_reel_url": reel_url,
         "video_url_source": "supabase",
         "finished_at": now_iso,
         "updated_at": now_iso,

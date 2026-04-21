@@ -16,6 +16,11 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_BUCKET = os.getenv("SUPABASE_VIDEOS_BUCKET", "videos")
 SUPABASE_TABLE = os.getenv("SUPABASE_VIDEO_JOBS_TABLE", "video_jobs")
 
+MAX_UPLOAD_BYTES = 45 * 1024 * 1024
+TARGET_UPLOAD_BYTES = 42 * 1024 * 1024
+FALLBACK_TARGET_UPLOAD_BYTES = 35 * 1024 * 1024
+DEFAULT_AUDIO_BITRATE_K = 96
+
 
 def upload_to_supabase(local_path: str, token: str, object_name: str):
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -184,6 +189,50 @@ def polish_video_ffmpeg(input_mp4: str, output_mp4: str):
     ]
     subprocess.run(cmd, check=True)
 
+def compress_video_for_upload(input_mp4: str, output_mp4: str, target_bytes: int):
+    probe_cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        input_mp4
+    ]
+
+    duration_raw = subprocess.check_output(probe_cmd).decode().strip()
+    duration = float(duration_raw) if duration_raw else 0.0
+
+    if duration <= 0:
+        raise RuntimeError("Durata video non valida per compressione upload")
+
+    target_kbits_total = int((target_bytes * 8) / 1024)
+    target_kbps_total = max(350, int(target_kbits_total / duration))
+
+    audio_kbps = min(DEFAULT_AUDIO_BITRATE_K, max(48, int(target_kbps_total * 0.18)))
+    video_kbps = max(220, target_kbps_total - audio_kbps)
+
+    print("🗜️ Compress upload target bytes:", target_bytes)
+    print("🗜️ Duration:", duration)
+    print("🗜️ Video bitrate target:", video_kbps, "k")
+    print("🗜️ Audio bitrate target:", audio_kbps, "k")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", input_mp4,
+        "-vf", "scale='min(1080,iw)':'-2'",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-b:v", f"{video_kbps}k",
+        "-maxrate", f"{int(video_kbps * 1.25)}k",
+        "-bufsize", f"{int(video_kbps * 2)}k",
+        "-c:a", "aac",
+        "-b:a", f"{audio_kbps}k",
+        "-movflags", "+faststart",
+        output_mp4
+    ]
+
+    subprocess.run(cmd, check=True)
+
 
 def handler(job):
     start_ts = time.time()
@@ -287,36 +336,87 @@ def handler(job):
 
         final_video_path = video_path
 
-        if plan in ["pro", "ultra"]:
-            polished_path = f"/tmp/{token}_polished.mp4"
+       if plan in ["pro", "ultra"]:
+    polished_path = f"/tmp/{token}_polished.mp4"
 
-            try:
-                print(f"✨ Avvio polish FFmpeg per piano: {plan}")
-                polish_video_ffmpeg(video_path, polished_path)
+    try:
+        print(f"✨ Avvio polish FFmpeg per piano: {plan}")
+        polish_video_ffmpeg(video_path, polished_path)
 
-                if not os.path.exists(polished_path):
-                    return fail_job("Polish video non creato")
+        if not os.path.exists(polished_path):
+            return fail_job("Polish video non creato")
 
-                polished_size = os.path.getsize(polished_path)
-                print("📏 Polished video size:", polished_size)
+        polished_size = os.path.getsize(polished_path)
+        print("📏 Polished video size:", polished_size)
 
-                if polished_size < 100000:
-                    return fail_job("Polish video troppo piccolo")
+        if polished_size < 100000:
+            return fail_job("Polish video troppo piccolo")
 
-                final_video_path = polished_path
-                print("✅ Polish FFmpeg completato:", final_video_path)
+        final_video_path = polished_path
+        print("✅ Polish FFmpeg completato:", final_video_path)
 
-            except Exception as polish_err:
-                return fail_job(f"Polish FFmpeg error: {polish_err}")
+    except Exception as polish_err:
+        return fail_job(f"Polish FFmpeg error: {polish_err}")
 
-        size = os.path.getsize(final_video_path)
-        print("📏 Video finale size:", size)
+size = os.path.getsize(final_video_path)
+print("📏 Video finale size:", size)
 
-        if size < 100000:
-            return fail_job("Video finale troppo piccolo")
+if size < 100000:
+    return fail_job("Video finale troppo piccolo")
 
-        object_name = f"{token}.mp4"
-        final_url = upload_to_supabase(final_video_path, token, object_name)
+upload_video_path = final_video_path
+
+if size > MAX_UPLOAD_BYTES:
+    compressed_path = f"/tmp/{token}_compressed.mp4"
+
+    try:
+        print("⚠️ File troppo grande per Supabase free, avvio compressione...")
+        compress_video_for_upload(
+            final_video_path,
+            compressed_path,
+            TARGET_UPLOAD_BYTES
+        )
+
+        if not os.path.exists(compressed_path):
+            return fail_job("Compressione upload non riuscita")
+
+        compressed_size = os.path.getsize(compressed_path)
+        print("📦 Compressed video size:", compressed_size)
+
+        if compressed_size < 100000:
+            return fail_job("Video compresso troppo piccolo")
+
+        if compressed_size > MAX_UPLOAD_BYTES:
+            print("⚠️ Primo tentativo ancora troppo grande, provo più aggressivo...")
+            compressed_path_2 = f"/tmp/{token}_compressed_2.mp4"
+
+            compress_video_for_upload(
+                final_video_path,
+                compressed_path_2,
+                FALLBACK_TARGET_UPLOAD_BYTES
+            )
+
+            if not os.path.exists(compressed_path_2):
+                return fail_job("Seconda compressione upload non riuscita")
+
+            compressed_size_2 = os.path.getsize(compressed_path_2)
+            print("📦 Second compressed video size:", compressed_size_2)
+
+            if compressed_size_2 < 100000:
+                return fail_job("Secondo video compresso troppo piccolo")
+
+            if compressed_size_2 > MAX_UPLOAD_BYTES:
+                return fail_job("Video ancora troppo grande anche dopo doppia compressione")
+
+            upload_video_path = compressed_path_2
+        else:
+            upload_video_path = compressed_path
+
+    except Exception as compress_err:
+        return fail_job(f"Compressione upload error: {compress_err}")
+
+object_name = f"{token}.mp4"
+final_url = upload_to_supabase(upload_video_path, token, object_name)
 
         if not final_url:
             return fail_job("Upload Supabase fallito")

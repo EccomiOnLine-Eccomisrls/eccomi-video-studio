@@ -29,7 +29,6 @@ def upload_to_supabase(local_path: str, token: str, object_name: str):
 
     p = Path(local_path)
     content_type = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
-
     object_path = object_name
     upload_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_path}?upsert=true"
 
@@ -88,7 +87,6 @@ def patch_video_job(token: str, payload: dict):
 
 def mark_video_job_done(token: str, final_url: str, reel_url: str = None, processing_seconds: int = None):
     now_iso = datetime.now(timezone.utc).isoformat()
-
     public_watch_url = f"https://video.eccomionline.com/video/{token}"
 
     payload = {
@@ -125,11 +123,12 @@ def normalize_plan(plan: str) -> str:
     p = (plan or "").strip().lower()
     if p in ["base", "basic"]:
         return "base"
-    if p in ["pro"]:
+    if p == "pro":
         return "pro"
     if p in ["ultra", "premium"]:
         return "ultra"
     return "base"
+
 
 def pick_tts_profile(voice_profile: str, gender: str):
     vp = (voice_profile or "").strip().lower()
@@ -168,7 +167,7 @@ def create_reel_ffmpeg(input_mp4: str, output_mp4: str):
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
-        output_mp4
+        output_mp4,
     ]
     subprocess.run(cmd, check=True)
 
@@ -185,9 +184,10 @@ def polish_video_ffmpeg(input_mp4: str, output_mp4: str):
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
-        output_mp4
+        output_mp4,
     ]
     subprocess.run(cmd, check=True)
+
 
 def compress_video_for_upload(input_mp4: str, output_mp4: str, target_bytes: int):
     probe_cmd = [
@@ -195,7 +195,7 @@ def compress_video_for_upload(input_mp4: str, output_mp4: str, target_bytes: int
         "-v", "error",
         "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
-        input_mp4
+        input_mp4,
     ]
 
     duration_raw = subprocess.check_output(probe_cmd).decode().strip()
@@ -219,7 +219,7 @@ def compress_video_for_upload(input_mp4: str, output_mp4: str, target_bytes: int
         "ffmpeg",
         "-y",
         "-i", input_mp4,
-        "-vf", "scale='min(1080,iw)':'-2'",
+        "-vf", "scale='min(1080,iw)':-2",
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-b:v", f"{video_kbps}k",
@@ -228,10 +228,55 @@ def compress_video_for_upload(input_mp4: str, output_mp4: str, target_bytes: int
         "-c:a", "aac",
         "-b:a", f"{audio_kbps}k",
         "-movflags", "+faststart",
-        output_mp4
+        output_mp4,
     ]
-
     subprocess.run(cmd, check=True)
+
+
+def ensure_uploadable_video(input_mp4: str, token: str, label: str) -> str:
+    size = os.path.getsize(input_mp4)
+    print(f"📏 {label} size iniziale:", size)
+
+    if size < 100000:
+        raise RuntimeError(f"{label} troppo piccolo")
+
+    if size <= MAX_UPLOAD_BYTES:
+        return input_mp4
+
+    compressed_path = f"/tmp/{token}_{label}_compressed.mp4"
+
+    print(f"⚠️ {label} troppo grande per Supabase free, avvio compressione...")
+    compress_video_for_upload(input_mp4, compressed_path, TARGET_UPLOAD_BYTES)
+
+    if not os.path.exists(compressed_path):
+        raise RuntimeError(f"Compressione {label} non riuscita")
+
+    compressed_size = os.path.getsize(compressed_path)
+    print(f"📦 {label} compressed size:", compressed_size)
+
+    if compressed_size < 100000:
+        raise RuntimeError(f"{label} compresso troppo piccolo")
+
+    if compressed_size <= MAX_UPLOAD_BYTES:
+        return compressed_path
+
+    compressed_path_2 = f"/tmp/{token}_{label}_compressed_2.mp4"
+    print(f"⚠️ {label} ancora troppo grande, provo più aggressivo...")
+    compress_video_for_upload(input_mp4, compressed_path_2, FALLBACK_TARGET_UPLOAD_BYTES)
+
+    if not os.path.exists(compressed_path_2):
+        raise RuntimeError(f"Seconda compressione {label} non riuscita")
+
+    compressed_size_2 = os.path.getsize(compressed_path_2)
+    print(f"📦 {label} second compressed size:", compressed_size_2)
+
+    if compressed_size_2 < 100000:
+        raise RuntimeError(f"Secondo {label} compresso troppo piccolo")
+
+    if compressed_size_2 > MAX_UPLOAD_BYTES:
+        raise RuntimeError(f"{label} ancora troppo grande anche dopo doppia compressione")
+
+    return compressed_path_2
 
 
 def handler(job):
@@ -242,9 +287,9 @@ def handler(job):
     image_url = i.get("image_url")
     text = i.get("text") or ""
     audio_url = i.get("audio_url")
-
     voice_profile = i.get("voice_profile") or ""
     gender = (i.get("gender") or "").lower()
+    plan = normalize_plan(i.get("plan", "base"))
 
     tts_profile = pick_tts_profile(voice_profile, gender)
     voice = tts_profile["voice"]
@@ -257,8 +302,7 @@ def handler(job):
     print("VOICE:", voice)
     print("RATE:", rate)
     print("PITCH:", pitch)
-
-    plan = normalize_plan(i.get("plan", "base"))
+    print("PLAN:", plan)
 
     tmp_image = "/tmp/source.jpg"
     tmp_audio = "/tmp/audio.wav"
@@ -284,7 +328,7 @@ def handler(job):
             "--fail",
             "--max-time", "120",
             "-o", tmp_image,
-            image_url
+            image_url,
         ], check=True)
 
         if audio_url and str(audio_url).strip():
@@ -294,20 +338,20 @@ def handler(job):
                 "--fail",
                 "--max-time", "120",
                 "-o", tmp_audio,
-                audio_url
+                audio_url,
             ], check=True)
         else:
             if not text:
                 return fail_job("Testo mancante per generazione TTS")
 
             subprocess.run([
-    "edge-tts",
-    "--text", text,
-    "--voice", voice,
-    "--rate", rate,
-    "--pitch", pitch,
-    "--write-media", tmp_audio
-], check=True)
+                "edge-tts",
+                "--text", text,
+                "--voice", voice,
+                "--rate", rate,
+                "--pitch", pitch,
+                "--write-media", tmp_audio,
+            ], check=True)
 
         cmd = [
             sys.executable,
@@ -322,101 +366,41 @@ def handler(job):
             "--batch_size", "2",
             "--pose_style", "0",
         ]
-
         subprocess.run(cmd, check=True)
 
         files = glob.glob(f"{tmp_result}/**/*.mp4", recursive=True)
-
         if not files:
             return fail_job("Nessun video generato (.mp4 non trovato)")
 
         video_path = max(files, key=os.path.getctime)
-
         print("🎬 Video base generato:", video_path)
 
         final_video_path = video_path
 
-       if plan in ["pro", "ultra"]:
-    polished_path = f"/tmp/{token}_polished.mp4"
+        if plan in ["pro", "ultra"]:
+            polished_path = f"/tmp/{token}_polished.mp4"
 
-    try:
-        print(f"✨ Avvio polish FFmpeg per piano: {plan}")
-        polish_video_ffmpeg(video_path, polished_path)
+            try:
+                print(f"✨ Avvio polish FFmpeg per piano: {plan}")
+                polish_video_ffmpeg(video_path, polished_path)
 
-        if not os.path.exists(polished_path):
-            return fail_job("Polish video non creato")
+                if not os.path.exists(polished_path):
+                    return fail_job("Polish video non creato")
 
-        polished_size = os.path.getsize(polished_path)
-        print("📏 Polished video size:", polished_size)
+                polished_size = os.path.getsize(polished_path)
+                print("📏 Polished video size:", polished_size)
 
-        if polished_size < 100000:
-            return fail_job("Polish video troppo piccolo")
+                if polished_size < 100000:
+                    return fail_job("Polish video troppo piccolo")
 
-        final_video_path = polished_path
-        print("✅ Polish FFmpeg completato:", final_video_path)
+                final_video_path = polished_path
+                print("✅ Polish FFmpeg completato:", final_video_path)
 
-    except Exception as polish_err:
-        return fail_job(f"Polish FFmpeg error: {polish_err}")
+            except Exception as polish_err:
+                return fail_job(f"Polish FFmpeg error: {polish_err}")
 
-size = os.path.getsize(final_video_path)
-print("📏 Video finale size:", size)
-
-if size < 100000:
-    return fail_job("Video finale troppo piccolo")
-
-upload_video_path = final_video_path
-
-if size > MAX_UPLOAD_BYTES:
-    compressed_path = f"/tmp/{token}_compressed.mp4"
-
-    try:
-        print("⚠️ File troppo grande per Supabase free, avvio compressione...")
-        compress_video_for_upload(
-            final_video_path,
-            compressed_path,
-            TARGET_UPLOAD_BYTES
-        )
-
-        if not os.path.exists(compressed_path):
-            return fail_job("Compressione upload non riuscita")
-
-        compressed_size = os.path.getsize(compressed_path)
-        print("📦 Compressed video size:", compressed_size)
-
-        if compressed_size < 100000:
-            return fail_job("Video compresso troppo piccolo")
-
-        if compressed_size > MAX_UPLOAD_BYTES:
-            print("⚠️ Primo tentativo ancora troppo grande, provo più aggressivo...")
-            compressed_path_2 = f"/tmp/{token}_compressed_2.mp4"
-
-            compress_video_for_upload(
-                final_video_path,
-                compressed_path_2,
-                FALLBACK_TARGET_UPLOAD_BYTES
-            )
-
-            if not os.path.exists(compressed_path_2):
-                return fail_job("Seconda compressione upload non riuscita")
-
-            compressed_size_2 = os.path.getsize(compressed_path_2)
-            print("📦 Second compressed video size:", compressed_size_2)
-
-            if compressed_size_2 < 100000:
-                return fail_job("Secondo video compresso troppo piccolo")
-
-            if compressed_size_2 > MAX_UPLOAD_BYTES:
-                return fail_job("Video ancora troppo grande anche dopo doppia compressione")
-
-            upload_video_path = compressed_path_2
-        else:
-            upload_video_path = compressed_path
-
-    except Exception as compress_err:
-        return fail_job(f"Compressione upload error: {compress_err}")
-
-object_name = f"{token}.mp4"
-final_url = upload_to_supabase(upload_video_path, token, object_name)
+        upload_video_path = ensure_uploadable_video(final_video_path, token, "main")
+        final_url = upload_to_supabase(upload_video_path, token, f"{token}.mp4")
 
         if not final_url:
             return fail_job("Upload Supabase fallito")
@@ -428,17 +412,15 @@ final_url = upload_to_supabase(upload_video_path, token, object_name)
             create_reel_ffmpeg(final_video_path, reel_path)
 
             if os.path.exists(reel_path) and os.path.getsize(reel_path) > 5000:
-                reel_url = upload_to_supabase(
-                    reel_path,
-                    token,
-                    f"{token}_reel.mp4"
-                )
+                upload_reel_path = ensure_uploadable_video(reel_path, token, "reel")
+                reel_url = upload_to_supabase(upload_reel_path, token, f"{token}_reel.mp4")
                 print("✅ Reel upload OK:", reel_url)
             else:
                 print("⚠️ Reel non creato o troppo piccolo")
 
         except Exception as reel_err:
-            print("❌ Reel creation error:", repr(reel_err))
+            print("❌ Reel creation/upload error:", repr(reel_err))
+            reel_url = None
 
         processing_seconds = int(time.time() - start_ts)
 
@@ -447,7 +429,7 @@ final_url = upload_to_supabase(upload_video_path, token, object_name)
                 token=token,
                 final_url=final_url,
                 reel_url=reel_url,
-                processing_seconds=processing_seconds
+                processing_seconds=processing_seconds,
             )
             print("✅ video_jobs aggiornato:", db_updated)
         except Exception as db_err:
@@ -458,7 +440,7 @@ final_url = upload_to_supabase(upload_video_path, token, object_name)
             "reel_url": reel_url,
             "token": token,
             "plan": plan,
-            "processing_seconds": processing_seconds
+            "processing_seconds": processing_seconds,
         }
 
     except subprocess.CalledProcessError as e:
@@ -470,5 +452,5 @@ final_url = upload_to_supabase(upload_video_path, token, object_name)
 
 runpod.serverless.start({
     "handler": handler,
-    "max_concurrency": 3
+    "max_concurrency": 3,
 })

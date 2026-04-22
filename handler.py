@@ -134,25 +134,65 @@ def pick_tts_profile(voice_profile: str, gender: str):
     vp = (voice_profile or "").strip().lower()
 
     profiles = {
-        "man_standard":   {"voice": "it-IT-GiuseppeNeural", "rate": "+0%",  "pitch": "+0Hz"},
-        "man_happy":      {"voice": "it-IT-GiuseppeNeural", "rate": "+10%", "pitch": "+2Hz"},
-        "man_serious":    {"voice": "it-IT-GiuseppeNeural", "rate": "-10%", "pitch": "-2Hz"},
+        "man_standard": {
+            "voice": "it-IT-GiuseppeNeural",
+            "rate": "+0%",
+            "pitch": "+0Hz",
+        },
+        "man_happy": {
+            "voice": "it-IT-GiuseppeNeural",
+            "rate": "+10%",
+            "pitch": "+2Hz",
+        },
+        "man_serious": {
+            "voice": "it-IT-GiuseppeNeural",
+            "rate": "-10%",
+            "pitch": "-2Hz",
+        },
 
-        "woman_standard": {"voice": "it-IT-ElsaNeural",     "rate": "+0%",  "pitch": "+0Hz"},
-        "woman_happy":    {"voice": "it-IT-ElsaNeural",     "rate": "+10%", "pitch": "+2Hz"},
-        "woman_serious":  {"voice": "it-IT-ElsaNeural",     "rate": "-10%", "pitch": "-2Hz"},
+        "woman_standard": {
+            "voice": "it-IT-ElsaNeural",
+            "rate": "+0%",
+            "pitch": "+0Hz",
+        },
+        "woman_happy": {
+            "voice": "it-IT-ElsaNeural",
+            "rate": "+10%",
+            "pitch": "+2Hz",
+        },
+        "woman_serious": {
+            "voice": "it-IT-ElsaNeural",
+            "rate": "-10%",
+            "pitch": "-2Hz",
+        },
 
-        "boy":            {"voice": "it-IT-GiuseppeNeural", "rate": "+18%", "pitch": "+6Hz"},
-        "girl":           {"voice": "it-IT-ElsaNeural",     "rate": "+18%", "pitch": "+6Hz"},
+        "boy": {
+            "voice": "it-IT-GiuseppeNeural",
+            "rate": "+18%",
+            "pitch": "+6Hz",
+        },
+        "girl": {
+            "voice": "it-IT-PierinaNeural",
+            "rate": "+8%",
+            "pitch": "+3Hz",
+        },
     }
 
     if vp in profiles:
         return profiles[vp]
 
     if (gender or "").lower() in ["female", "f", "donna", "femmina"]:
-        return {"voice": "it-IT-ElsaNeural", "rate": "+0%", "pitch": "+0Hz"}
+        return {
+            "voice": "it-IT-ElsaNeural",
+            "rate": "+0%",
+            "pitch": "+0Hz",
+        }
 
-    return {"voice": "it-IT-GiuseppeNeural", "rate": "+0%", "pitch": "+0Hz"}
+    return {
+        "voice": "it-IT-GiuseppeNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+    }
 
 
 def create_reel_ffmpeg(input_mp4: str, output_mp4: str):
@@ -348,8 +388,8 @@ def handler(job):
                 "edge-tts",
                 "--text", text,
                 "--voice", voice,
-                "--rate", rate,
-                "--pitch", pitch,
+                f"--rate={rate}",
+                f"--pitch={pitch}",
                 "--write-media", tmp_audio,
             ], check=True)
 
